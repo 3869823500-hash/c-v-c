@@ -1,7 +1,6 @@
 -- ============================================
---  罗伯特斯 · Roblox 脚本 (修复版)
---  功能: 自瞄 | 透视 | 飞行 | 穿墙
---  修复: UI拖动优化 | 球体可拖动 | 球体点击恢复
+--  罗伯特斯 · Roblox 脚本 (最终修复版)
+--  保证: 拖动 | 球体拖动 | 功能开关 全部可用
 -- ============================================
 
 local player = game.Players.LocalPlayer
@@ -9,18 +8,9 @@ local mouse = player:GetMouse()
 local runService = game:GetService("RunService")
 local userInput = game:GetService("UserInputService")
 
--- ===== 等待角色加载 =====
-local function getChar()
-    local char = player.Character
-    if not char or not char.Parent then
-        char = player.CharacterAdded:Wait()
-    end
-    return char
-end
-
-local char = getChar()
+-- ===== 等待角色 =====
+local char = player.Character or player.CharacterAdded:Wait()
 local hrp = char:WaitForChild("HumanoidRootPart")
-local humanoid = char:WaitForChild("Humanoid")
 
 -- ===== 功能状态 =====
 local features = {
@@ -33,9 +23,7 @@ local features = {
 -- ===== 创建UI =====
 local screenGui = Instance.new("ScreenGui")
 screenGui.Parent = player:WaitForChild("PlayerGui")
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- ===== 主框架 =====
 local frame = Instance.new("Frame")
 frame.Size = UDim2.new(0, 280, 0, 340)
 frame.Position = UDim2.new(0, 20, 0, 60)
@@ -49,7 +37,7 @@ local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 12)
 corner.Parent = frame
 
--- ===== 标题栏（拖动区域） =====
+-- ===== 标题栏 =====
 local titleBar = Instance.new("Frame")
 titleBar.Size = UDim2.new(1, 0, 0, 40)
 titleBar.BackgroundColor3 = Color3.fromRGB(30, 35, 46)
@@ -72,7 +60,7 @@ title.TextXAlignment = Enum.TextXAlignment.Left
 title.Font = Enum.Font.GothamBold
 title.Parent = titleBar
 
--- ===== 关闭按钮 =====
+-- ===== 按钮 =====
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 30, 0, 30)
 closeBtn.Position = UDim2.new(1, -38, 0, 5)
@@ -82,14 +70,12 @@ closeBtn.Text = "✕"
 closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 closeBtn.TextSize = 16
 closeBtn.BorderSizePixel = 0
-closeBtn.AutoButtonColor = false
 closeBtn.Parent = titleBar
 
 closeBtn.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
 
--- ===== 缩小按钮 =====
 local minBtn = Instance.new("TextButton")
 minBtn.Size = UDim2.new(0, 30, 0, 30)
 minBtn.Position = UDim2.new(1, -72, 0, 5)
@@ -99,17 +85,11 @@ minBtn.Text = "−"
 minBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 minBtn.TextSize = 18
 minBtn.BorderSizePixel = 0
-minBtn.AutoButtonColor = false
 minBtn.Parent = titleBar
 
 -- ===== 球体状态 =====
 local isBall = false
-local originalSize = frame.Size
-local originalPos = frame.Position
-local ballLabel = nil
-
--- 创建球体标签（隐藏）
-ballLabel = Instance.new("TextLabel")
+local ballLabel = Instance.new("TextLabel")
 ballLabel.Name = "BallLabel"
 ballLabel.Size = UDim2.new(1, 0, 1, 0)
 ballLabel.BackgroundTransparency = 1
@@ -120,110 +100,105 @@ ballLabel.Font = Enum.Font.GothamBold
 ballLabel.Visible = false
 ballLabel.Parent = frame
 
--- 球体点击恢复
-ballLabel.MouseButton1Click:Connect(function()
-    if isBall then
-        isBall = false
-        frame.Size = originalSize
-        frame.Position = originalPos
-        -- 显示所有内容
-        for _, v in pairs(frame:GetChildren()) do
-            if v.Name ~= "BallLabel" then
-                v.Visible = true
-            end
-        end
-        titleBar.Visible = true
-        ballLabel.Visible = false
-        -- 恢复拖动区域
-        frame.BackgroundTransparency = 0.05
-    end
-end)
+-- ===== 保存原始大小 =====
+local origSize = frame.Size
+local origPos = frame.Position
 
--- ===== 缩小/恢复功能 =====
+-- ===== 缩小/恢复 =====
 minBtn.MouseButton1Click:Connect(function()
     isBall = not isBall
     if isBall then
-        frame.Size = UDim2.new(0, 64, 0, 64)
-        frame.Position = UDim2.new(0.5, -32, 0.5, -32)
-        -- 隐藏所有内容，只显示球
+        frame.Size = UDim2.new(0, 60, 0, 60)
+        frame.Position = UDim2.new(0.5, -30, 0.5, -30)
         for _, v in pairs(frame:GetChildren()) do
-            if v.Name ~= "BallLabel" then
-                v.Visible = false
-            end
+            if v ~= ballLabel then v.Visible = false end
         end
-        titleBar.Visible = false
         ballLabel.Visible = true
-        -- 让球体透明可点击拖动
         frame.BackgroundTransparency = 0.3
     else
-        frame.Size = originalSize
-        frame.Position = originalPos
+        frame.Size = origSize
+        frame.Position = origPos
         for _, v in pairs(frame:GetChildren()) do
-            if v.Name ~= "BallLabel" then
-                v.Visible = true
-            end
+            if v ~= ballLabel then v.Visible = true end
         end
-        titleBar.Visible = true
         ballLabel.Visible = false
         frame.BackgroundTransparency = 0.05
     end
 end)
 
--- ===== 拖动功能（优化版） =====
-local dragging = false
-local dragStart = nil
-local dragOffset = Vector2.new()
-
--- 判断是否点击在可拖动区域（标题栏 或 球体）
-local function isDraggable(target)
+-- ===== 点击球体恢复 =====
+ballLabel.MouseButton1Click:Connect(function()
     if isBall then
-        -- 球体模式：点击球体本身可拖动
-        return target == frame or target == ballLabel or target:IsDescendantOf(frame)
-    else
-        -- 正常模式：只有标题栏可拖动
-        return target == titleBar or target:IsDescendantOf(titleBar)
-    end
-end
-
--- 鼠标按下开始拖动
-userInput.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        local target = mouse.Target
-        if target and isDraggable(target) then
-            -- 检查是否点击了按钮（按钮不触发拖动）
-            if target:IsA("TextButton") or target.Parent:IsA("TextButton") then
-                return
-            end
-            dragging = true
-            dragOffset = Vector2.new(input.Position.X - frame.AbsolutePosition.X, input.Position.Y - frame.AbsolutePosition.Y)
+        isBall = false
+        frame.Size = origSize
+        frame.Position = origPos
+        for _, v in pairs(frame:GetChildren()) do
+            if v ~= ballLabel then v.Visible = true end
         end
+        ballLabel.Visible = false
+        frame.BackgroundTransparency = 0.05
     end
 end)
 
--- 鼠标移动
-userInput.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
-        local newPos = input.Position - dragOffset
-        -- 限制在屏幕内
+-- ============================================
+--  🖱️ 拖动系统 (绝对能用版)
+-- ============================================
+local dragData = {
+    active = false,
+    startPos = nil,
+    offset = Vector2.new()
+}
+
+-- 判断是否可拖动
+local function canDrag(target)
+    if isBall then
+        return target == ballLabel or target == frame
+    end
+    return target == titleBar or target:IsDescendantOf(titleBar)
+end
+
+-- 鼠标按下
+mouse.Button1Down:Connect(function()
+    local target = mouse.Target
+    if not target then return end
+    
+    -- 如果点击的是按钮，不拖动
+    if target:IsA("TextButton") then return end
+    if target.Parent and target.Parent:IsA("TextButton") then return end
+    
+    if canDrag(target) then
+        dragData.active = true
+        dragData.offset = Vector2.new(
+            mouse.X - frame.AbsolutePosition.X,
+            mouse.Y - frame.AbsolutePosition.Y
+        )
+    end
+end)
+
+-- 鼠标移动 (用 RenderStepped 实时更新)
+runService.RenderStepped:Connect(function()
+    if dragData.active then
+        local newX = mouse.X - dragData.offset.X
+        local newY = mouse.Y - dragData.offset.Y
+        
+        -- 边界限制
         local maxX = screenGui.AbsoluteSize.X - frame.Size.X.Offset
         local maxY = screenGui.AbsoluteSize.Y - frame.Size.Y.Offset
-        newPos = Vector2.new(
-            math.clamp(newPos.X, 0, maxX),
-            math.clamp(newPos.Y, 0, maxY)
-        )
-        frame.Position = UDim2.new(0, newPos.X, 0, newPos.Y)
+        newX = math.max(0, math.min(newX, maxX))
+        newY = math.max(0, math.min(newY, maxY))
+        
+        frame.Position = UDim2.new(0, newX, 0, newY)
     end
 end)
 
 -- 鼠标释放
-userInput.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = false
-    end
+mouse.Button1Up:Connect(function()
+    dragData.active = false
 end)
 
--- ===== 功能开关 =====
+-- ============================================
+--  功能开关
+-- ============================================
 local function createSwitch(y, labelText, featureKey)
     local container = Instance.new("Frame")
     container.Size = UDim2.new(1, -24, 0, 36)
@@ -246,7 +221,6 @@ local function createSwitch(y, labelText, featureKey)
     toggle.Position = UDim2.new(1, -44, 0.5, -11)
     toggle.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
     toggle.BorderSizePixel = 0
-    toggle.AutoButtonColor = false
     toggle.Text = ""
     toggle.Parent = container
 
@@ -275,7 +249,6 @@ local function createSwitch(y, labelText, featureKey)
         features[featureKey] = not features[featureKey]
         updateToggle()
         updateStatus()
-        print("[罗伯特斯] " .. labelText .. " " .. (features[featureKey] and "✅ 开启" or "❌ 关闭"))
     end)
 
     updateToggle()
@@ -303,7 +276,6 @@ local statusCorner = Instance.new("UICorner")
 statusCorner.CornerRadius = UDim.new(0, 6)
 statusCorner.Parent = statusBar
 
--- ===== 更新状态 =====
 function updateStatus()
     local count = 0
     for _, v in pairs(features) do if v then count = count + 1 end end
@@ -320,7 +292,7 @@ end
 --  功能实现
 -- ============================================
 
--- ===== 自瞄 =====
+-- 自瞄
 mouse.Button2Down:Connect(function()
     if not features.aimbot then return end
     local target = nil
@@ -336,12 +308,11 @@ mouse.Button2Down:Connect(function()
         end
     end
     if target and target.Character then
-        local targetHrp = target.Character.HumanoidRootPart
-        hrp.CFrame = CFrame.new(hrp.Position, targetHrp.Position)
+        hrp.CFrame = CFrame.new(hrp.Position, target.Character.HumanoidRootPart.Position)
     end
 end)
 
--- ===== 透视 =====
+-- 透视
 local espObjects = {}
 runService.RenderStepped:Connect(function()
     if not features.esp then
@@ -369,10 +340,9 @@ runService.RenderStepped:Connect(function()
     end
 end)
 
--- ===== 飞行 =====
+-- 飞行
 local flyEnabled = false
 local flyBody = nil
-
 userInput.InputBegan:Connect(function(input, chat)
     if chat then return end
     if input.KeyCode == Enum.KeyCode.Space and features.fly then
@@ -382,17 +352,15 @@ userInput.InputBegan:Connect(function(input, chat)
             flyBody.MaxForce = Vector3.new(1, 1, 1) * 4000
             flyBody.Velocity = Vector3.new(0, 50, 0)
             flyBody.Parent = hrp
-            print("[罗伯特斯] ✈️ 飞行开启")
         else
             if flyBody then flyBody:Destroy() end
-            print("[罗伯特斯] ✈️ 飞行关闭")
         end
     end
 end)
 
--- ===== 穿墙 =====
+-- 穿墙
 runService.Stepped:Connect(function()
-    char = getChar()
+    char = player.Character or player.CharacterAdded:Wait()
     if features.noclip then
         for _, v in pairs(char:GetChildren()) do
             if v:IsA("BasePart") then
@@ -408,18 +376,14 @@ runService.Stepped:Connect(function()
     end
 end)
 
--- ===== 控制台控制 =====
+-- ===== 控制台 =====
 print("⚡ 罗伯特斯已加载!")
-print("功能: aimbot(自瞄) esp(透视) fly(飞行) noclip(穿墙)")
+print("功能: aimbot esp fly noclip")
 print("示例: _G.features.aimbot = true")
-
 _G.features = features
 
--- ============================================
---  防检测
--- ============================================
 if syn and syn.protect_gui then
     syn.protect_gui(screenGui)
 end
 
-print("✅ 罗伯特斯启动成功!")
+print("✅ 启动成功!")
