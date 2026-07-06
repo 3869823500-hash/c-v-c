@@ -1,6 +1,6 @@
 -- ============================================
---  罗伯特斯 · Roblox 脚本 (全新重写版)
---  使用 ScreenGui + 独立拖动系统
+--  罗伯特斯 · Roblox 脚本 (极简稳定版)
+--  全部用 TextButton 实现，绝对可用
 -- ============================================
 
 local player = game.Players.LocalPlayer
@@ -25,240 +25,211 @@ local screenGui = Instance.new("ScreenGui")
 screenGui.Parent = player:WaitForChild("PlayerGui")
 screenGui.ResetOnSpawn = false
 
--- ===== 主窗口 =====
-local window = Instance.new("Frame")
-window.Size = UDim2.new(0, 280, 0, 320)
-window.Position = UDim2.new(0, 30, 0, 80)
-window.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
-window.BackgroundTransparency = 0.08
-window.BorderSizePixel = 0
-window.ClipsDescendants = true
-window.Parent = screenGui
+-- ============================================
+--  创建按钮列表 (不用Frame, 全用TextButton)
+-- ============================================
 
-local windowCorner = Instance.new("UICorner")
-windowCorner.CornerRadius = UDim.new(0, 10)
-windowCorner.Parent = window
+local buttons = {}
+local buttonNames = {"🎯 自瞄", "👁 透视", "✈️ 飞行", "🧱 穿墙"}
+local buttonKeys = {"aimbot", "esp", "fly", "noclip"}
+local buttonStatus = {}  -- 记录每个按钮的开关状态
 
--- ===== 标题栏 (拖动用) =====
-local header = Instance.new("Frame")
-header.Size = UDim2.new(1, 0, 0, 38)
-header.BackgroundColor3 = Color3.fromRGB(30, 35, 48)
-header.BackgroundTransparency = 0.4
-header.BorderSizePixel = 0
-header.Parent = window
+-- 创建背景框 (简单装饰)
+local bg = Instance.new("TextLabel")
+bg.Size = UDim2.new(0, 200, 0, 220)
+bg.Position = UDim2.new(0, 20, 0, 50)
+bg.BackgroundColor3 = Color3.fromRGB(18, 22, 32)
+bg.BackgroundTransparency = 0.1
+bg.Text = ""
+bg.BorderSizePixel = 0
+bg.Parent = screenGui
 
-local headerCorner = Instance.new("UICorner")
-headerCorner.CornerRadius = UDim.new(0, 10)
-headerCorner.Parent = header
+local bgCorner = Instance.new("UICorner")
+bgCorner.CornerRadius = UDim.new(0, 10)
+bgCorner.Parent = bg
 
-local titleText = Instance.new("TextLabel")
-titleText.Size = UDim2.new(0, 150, 1, 0)
-titleText.Position = UDim2.new(0, 12, 0, 0)
-titleText.BackgroundTransparency = 1
-titleText.Text = "⚡ 罗伯特斯"
-titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleText.TextSize = 15
-titleText.TextXAlignment = Enum.TextXAlignment.Left
-titleText.Font = Enum.Font.GothamBold
-titleText.Parent = header
+-- 标题
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(0, 200, 0, 35)
+title.Position = UDim2.new(0, 0, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "⚡ 罗伯特斯"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 16
+title.Font = Enum.Font.GothamBold
+title.Parent = bg
 
--- ===== 按钮 =====
+-- 关闭按钮
 local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0, 28, 0, 28)
-closeBtn.Position = UDim2.new(1, -34, 0, 5)
-closeBtn.BackgroundColor3 = Color3.fromRGB(255, 70, 70)
-closeBtn.BackgroundTransparency = 0.7
+closeBtn.Size = UDim2.new(0, 30, 0, 30)
+closeBtn.Position = UDim2.new(1, -35, 0, 3)
+closeBtn.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+closeBtn.BackgroundTransparency = 0.6
 closeBtn.Text = "✕"
 closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 closeBtn.TextSize = 14
 closeBtn.BorderSizePixel = 0
-closeBtn.Parent = header
+closeBtn.Parent = bg
 
 closeBtn.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
 
+-- 缩小按钮
 local miniBtn = Instance.new("TextButton")
-miniBtn.Size = UDim2.new(0, 28, 0, 28)
-miniBtn.Position = UDim2.new(1, -66, 0, 5)
+miniBtn.Size = UDim2.new(0, 30, 0, 30)
+miniBtn.Position = UDim2.new(1, -68, 0, 3)
 miniBtn.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
-miniBtn.BackgroundTransparency = 0.7
+miniBtn.BackgroundTransparency = 0.6
 miniBtn.Text = "−"
 miniBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 miniBtn.TextSize = 16
 miniBtn.BorderSizePixel = 0
-miniBtn.Parent = header
+miniBtn.Parent = bg
 
--- ===== 内容区域 =====
-local content = Instance.new("Frame")
-content.Size = UDim2.new(1, 0, 1, -38)
-content.Position = UDim2.new(0, 0, 0, 38)
-content.BackgroundTransparency = 1
-content.Parent = window
-
--- ===== 创建开关 =====
-local function makeSwitch(y, label, key)
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, -20, 0, 34)
-    row.Position = UDim2.new(0, 10, 0, y)
-    row.BackgroundTransparency = 1
-    row.Parent = content
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(0, 120, 1, 0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = label
-    lbl.TextColor3 = Color3.fromRGB(210, 215, 225)
-    lbl.TextSize = 14
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Font = Enum.Font.Gotham
-    lbl.Parent = row
-
+-- ===== 创建功能按钮 =====
+for i = 1, 4 do
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 40, 0, 22)
-    btn.Position = UDim2.new(1, -44, 0.5, -11)
-    btn.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
+    btn.Size = UDim2.new(0, 180, 0, 32)
+    btn.Position = UDim2.new(0, 10, 0, 40 + (i-1) * 38)
+    btn.BackgroundColor3 = Color3.fromRGB(45, 50, 65)
+    btn.Text = buttonNames[i] .. " ⚪"
+    btn.TextColor3 = Color3.fromRGB(200, 205, 215)
+    btn.TextSize = 14
     btn.BorderSizePixel = 0
-    btn.Text = ""
-    btn.Parent = row
+    btn.Font = Enum.Font.Gotham
+    btn.Parent = bg
 
     local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(1, 0)
+    btnCorner.CornerRadius = UDim.new(0, 6)
     btnCorner.Parent = btn
 
-    local dot = Instance.new("Frame")
-    dot.Size = UDim2.new(0, 16, 0, 16)
-    dot.Position = UDim2.new(0, 3, 0.5, -8)
-    dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    dot.BorderSizePixel = 0
-    dot.Parent = btn
+    -- 保存状态
+    buttonStatus[i] = false
 
-    local dotCorner = Instance.new("UICorner")
-    dotCorner.CornerRadius = UDim.new(1, 0)
-    dotCorner.Parent = dot
-
-    local function update()
-        local on = features[key]
-        btn.BackgroundColor3 = on and Color3.fromRGB(60, 200, 120) or Color3.fromRGB(55, 55, 65)
-        dot.Position = on and UDim2.new(0, 21, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)
-    end
-
+    -- 点击切换
     btn.MouseButton1Click:Connect(function()
+        local key = buttonKeys[i]
         features[key] = not features[key]
-        update()
+        buttonStatus[i] = features[key]
+
+        -- 更新按钮外观
+        if features[key] then
+            btn.BackgroundColor3 = Color3.fromRGB(50, 180, 110)
+            btn.Text = buttonNames[i] .. " 🟢"
+            btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            btn.BackgroundColor3 = Color3.fromRGB(45, 50, 65)
+            btn.Text = buttonNames[i] .. " ⚪"
+            btn.TextColor3 = Color3.fromRGB(200, 205, 215)
+        end
+
         updateStatus()
-        print("[罗伯特斯] " .. label .. " " .. (features[key] and "开启" or "关闭"))
+        print("[罗伯特斯] " .. buttonNames[i] .. " " .. (features[key] and "开启" or "关闭"))
     end)
 
-    update()
-    return row
+    buttons[i] = btn
 end
 
-makeSwitch(8, "🎯 自瞄", "aimbot")
-makeSwitch(46, "👁 透视", "esp")
-makeSwitch(84, "✈️ 飞行", "fly")
-makeSwitch(122, "🧱 穿墙", "noclip")
-
--- ===== 状态栏 =====
-local status = Instance.new("TextLabel")
-status.Size = UDim2.new(1, -20, 0, 28)
-status.Position = UDim2.new(0, 10, 0, 168)
-status.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-status.BackgroundTransparency = 0.95
-status.Text = "● 就绪"
-status.TextColor3 = Color3.fromRGB(140, 145, 160)
-status.TextSize = 12
-status.Font = Enum.Font.Gotham
-status.Parent = content
+-- ===== 状态显示 =====
+local statusText = Instance.new("TextLabel")
+statusText.Size = UDim2.new(0, 180, 0, 25)
+statusText.Position = UDim2.new(0, 10, 0, 192)
+statusText.BackgroundColor3 = Color3.fromRGB(30, 35, 50)
+statusText.BackgroundTransparency = 0.5
+statusText.Text = "● 就绪"
+statusText.TextColor3 = Color3.fromRGB(150, 155, 170)
+statusText.TextSize = 12
+statusText.Font = Enum.Font.Gotham
+statusText.Parent = bg
 
 local statusCorner = Instance.new("UICorner")
-statusCorner.CornerRadius = UDim.new(0, 6)
-statusCorner.Parent = status
+statusCorner.CornerRadius = UDim.new(0, 4)
+statusCorner.Parent = statusText
 
 function updateStatus()
     local count = 0
     for _, v in pairs(features) do if v then count = count + 1 end end
     if count > 0 then
-        status.Text = "● " .. count .. " 个功能已开启"
-        status.TextColor3 = Color3.fromRGB(60, 200, 120)
+        statusText.Text = "● " .. count .. " 个功能已开启"
+        statusText.TextColor3 = Color3.fromRGB(60, 200, 120)
     else
-        status.Text = "● 就绪"
-        status.TextColor3 = Color3.fromRGB(140, 145, 160)
+        statusText.Text = "● 就绪"
+        statusText.TextColor3 = Color3.fromRGB(150, 155, 170)
     end
 end
 
 -- ============================================
---  🖱️ 拖动系统
+--  🖱️ 拖动 (用鼠标事件)
 -- ============================================
-local dragging = false
-local dragOffX = 0
-local dragOffY = 0
+local dragActive = false
+local dragX = 0
+local dragY = 0
 
-header.InputBegan:Connect(function(input)
+bg.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragOffX = input.Position.X - window.AbsolutePosition.X
-        dragOffY = input.Position.Y - window.AbsolutePosition.Y
+        -- 检查是否点击了按钮 (按钮不触发拖动)
+        local target = mouse.Target
+        if target and (target:IsA("TextButton") or target.Parent:IsA("TextButton")) then
+            return
+        end
+        dragActive = true
+        dragX = input.Position.X - bg.AbsolutePosition.X
+        dragY = input.Position.Y - bg.AbsolutePosition.Y
     end
 end)
 
 userInput.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = false
+        dragActive = false
     end
 end)
 
 runService.RenderStepped:Connect(function()
-    if dragging then
+    if dragActive then
         local pos = userInput:GetMouseLocation()
-        local newX = pos.X - dragOffX
-        local newY = pos.Y - dragOffY
-        newX = math.max(0, math.min(newX, screenGui.AbsoluteSize.X - window.Size.X.Offset))
-        newY = math.max(0, math.min(newY, screenGui.AbsoluteSize.Y - window.Size.Y.Offset))
-        window.Position = UDim2.new(0, newX, 0, newY)
+        local newX = pos.X - dragX
+        local newY = pos.Y - dragY
+        newX = math.max(0, math.min(newX, screenGui.AbsoluteSize.X - 200))
+        newY = math.max(0, math.min(newY, screenGui.AbsoluteSize.Y - 220))
+        bg.Position = UDim2.new(0, newX, 0, newY)
     end
 end)
 
 -- ============================================
---  🟠 球体模式 (独立窗口)
+--  🟠 球体模式
 -- ============================================
 local ballMode = false
-local ballFrame = nil
+local ball = nil
 
 function createBall()
-    if ballFrame then return end
-    
-    ballFrame = Instance.new("Frame")
-    ballFrame.Size = UDim2.new(0, 60, 0, 60)
-    ballFrame.Position = UDim2.new(0, window.Position.X.Offset + 110, 0, window.Position.Y.Offset + 130)
-    ballFrame.BackgroundColor3 = Color3.fromRGB(25, 30, 45)
-    ballFrame.BackgroundTransparency = 0.2
-    ballFrame.BorderSizePixel = 0
-    ballFrame.ClipsDescendants = true
-    ballFrame.Parent = screenGui
+    if ball then return end
+
+    ball = Instance.new("TextButton")
+    ball.Size = UDim2.new(0, 55, 0, 55)
+    ball.Position = UDim2.new(0, bg.Position.X.Offset + 70, 0, bg.Position.Y.Offset + 80)
+    ball.BackgroundColor3 = Color3.fromRGB(25, 30, 45)
+    ball.BackgroundTransparency = 0.2
+    ball.Text = "⚡"
+    ball.TextColor3 = Color3.fromRGB(255, 215, 0)
+    ball.TextSize = 28
+    ball.BorderSizePixel = 0
+    ball.Font = Enum.Font.GothamBold
+    ball.Parent = screenGui
 
     local ballCorner = Instance.new("UICorner")
     ballCorner.CornerRadius = UDim.new(1, 0)
-    ballCorner.Parent = ballFrame
-
-    local ballText = Instance.new("TextLabel")
-    ballText.Size = UDim2.new(1, 0, 1, 0)
-    ballText.BackgroundTransparency = 1
-    ballText.Text = "⚡"
-    ballText.TextColor3 = Color3.fromRGB(255, 215, 0)
-    ballText.TextSize = 28
-    ballText.Font = Enum.Font.GothamBold
-    ballText.Parent = ballFrame
+    ballCorner.Parent = ball
 
     -- 球体拖动
     local ballDrag = false
-    local bOffX, bOffY = 0, 0
+    local bX, bY = 0, 0
 
-    ballFrame.InputBegan:Connect(function(input)
+    ball.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             ballDrag = true
-            bOffX = input.Position.X - ballFrame.AbsolutePosition.X
-            bOffY = input.Position.Y - ballFrame.AbsolutePosition.Y
+            bX = input.Position.X - ball.AbsolutePosition.X
+            bY = input.Position.Y - ball.AbsolutePosition.Y
         end
     end)
 
@@ -269,32 +240,32 @@ function createBall()
     end)
 
     runService.RenderStepped:Connect(function()
-        if ballDrag and ballFrame then
+        if ballDrag and ball then
             local pos = userInput:GetMouseLocation()
-            local nx = pos.X - bOffX
-            local ny = pos.Y - bOffY
-            nx = math.max(0, math.min(nx, screenGui.AbsoluteSize.X - 60))
-            ny = math.max(0, math.min(ny, screenGui.AbsoluteSize.Y - 60))
-            ballFrame.Position = UDim2.new(0, nx, 0, ny)
+            local nx = pos.X - bX
+            local ny = pos.Y - bY
+            nx = math.max(0, math.min(nx, screenGui.AbsoluteSize.X - 55))
+            ny = math.max(0, math.min(ny, screenGui.AbsoluteSize.Y - 55))
+            ball.Position = UDim2.new(0, nx, 0, ny)
         end
     end)
 
     -- 点击球体恢复
-    ballText.MouseButton1Click:Connect(function()
-        if ballFrame then
-            ballFrame:Destroy()
-            ballFrame = nil
+    ball.MouseButton1Click:Connect(function()
+        if ball then
+            ball:Destroy()
+            ball = nil
         end
         ballMode = false
-        window.Visible = true
+        bg.Visible = true
     end)
 end
 
--- ===== 缩小按钮 =====
+-- ===== 缩小 =====
 miniBtn.MouseButton1Click:Connect(function()
     if not ballMode then
         ballMode = true
-        window.Visible = false
+        bg.Visible = false
         createBall()
     end
 end)
@@ -393,7 +364,6 @@ print("功能: aimbot(自瞄) esp(透视) fly(飞行) noclip(穿墙)")
 print("使用: _G.features.aimbot = true")
 _G.features = features
 
--- 防检测
 if syn and syn.protect_gui then
     syn.protect_gui(screenGui)
 end
