@@ -1,59 +1,35 @@
-D
-        if character and character:FindFirstChild("HumanoidRootPart") and character:FindFirstChild("Humanoid") then
-            local hrp = character.HumanoidRootPart
-            local humanoid = character.Humanoid
-            local point, onScreen = r6:WorldToViewportPoint(hrp.Position)
-            if onScreen and r2.HealthESP.Value then
-                local height = (r6:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0)).Y - r6:WorldToViewportPoint(hrp.Position + Vector3.new(0, 3, 0)).Y) * 0.75
-                hb.Background.Size = Vector2.new(5, height)
-                hb.Background.Position = Vector2.new(point.X + height * 0.75, point.Y - height)
-                hb.Background.Visible = true
-                local percent = math.floor(humanoid.Health / humanoid.MaxHealth * 100)
-                hb.Bar.Size = Vector2.new(5, height * percent / 100)
-                hb.Bar.Position = Vector2.new(point.X + height * 0.75, point.Y - height + height * (1 - percent / 100))
-                hb.Bar.Color = r2.HealthColor.Value
-                hb.Bar.Visible = true
-                hb.Percentage.Text = percent .. "%"
-                hb.Percentage.Position = Vector2.new(point.X + height * 0.75 + 2.5, point.Y - height - 15)
-                hb.Percentage.Color = r2.HealthColor.Value
-                hb.Percentage.Visible = true
-            else
-                hb.Background.Visible = false
-                hb.Bar.Visible = false
-                hb.Percentage.Visible = false
-            end
-        else
-            hb.Background.Visible = false
-            hb.Bar.Visible = false
-            hb.Percentage.Visible = false
-        end
-    end
-    
-    for player, name in pairs(esp.Names) do
-        local character = player.Character
-        if character then
-            local hrp = character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local point, onScreen = r6:WorldToViewportPoint(hrp.Position + Vector3.new(0, 3, 0))
-                if onScreen and r2.NameESP.Value then
-                    name.Text = player.Name
-                    name.Position = Vector2.new(point.X, point.Y)
-                    name.Color = r2.NameColor.Value
-                    name.Visible = true
-                else
-                    name.Visible = false
-                end
-            else
-                name.Visible = false
-            end
-        else
-            name.Visible = false
-        end
-    end
-    
-    for player, dist in pairs(esp.Distances) do
-        local character = player.Character
-        if character then
-            local hrp = character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local point
+-- 放在StarterGui下的本地脚本
+local player = game:GetService("Players").LocalPlayer
+local gui = Instance.new("ScreenGui")
+gui.Name = "ControlUI"
+gui.Parent = player:WaitForChild("PlayerGui")
+
+-- 主面板
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 220, 0, 140)
+frame.Position = UDim2.new(0.5, -110, 0.5, -70)
+frame.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
+frame.BackgroundTransparency = 0.1
+frame.BorderSizePixel = 0
+frame.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 14)
+corner.Parent = frame
+
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 1.5
+stroke.Color = Color3.fromRGB(150, 150, 255)
+stroke.Transparency = 0.4
+stroke.Parent = frame
+
+-- 标题
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0.2, 0)
+title.Position = UDim2.new(0, 0, 0.02, 0)
+title.BackgroundTransparency = 1
+title.Text = "控制系统"
+title.TextColor3 = Color3.fromRGB(220, 220, 255)
+title.TextScaled = true
+title.Font = Enum.Font.GothamBold
+title.Pare
