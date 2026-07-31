@@ -1,36 +1,13 @@
--- ============================================================
---  监狱辅助 V5（WindUI 版本）
---  最好看的UI，功能全齐
--- ============================================================
+--========================================
+-- Yu UI 监狱辅助完整版
+--========================================
 
--- ===== 加载 WindUI =====
-local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
-
--- ===== 创建窗口 =====
-local Window = WindUI:CreateWindow({
-    Title = "🏛️ 监狱辅助 V5",
-    Icon = "sword",
-    Author = "监狱人生专用",
-    Theme = "Dark",
-    Size = UDim2.fromOffset(650, 460),
-    Resizable = true,
-    ToggleKey = Enum.KeyCode.RightShift,
-})
-
--- ===== 添加标签 =====
-Window:Tag({
-    Title = "V5",
-    Icon = "shield",
-    Color = Color3.fromRGB(100, 200, 255),
-})
-
--- ============================================================
---  服务引用
--- ============================================================
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UIS = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -46,10 +23,23 @@ local Config = {
     子追 = false,
     静默 = false,
     FOV = 200,
-    目标部位 = "头",
 }
 
 local ESP表 = {}
+local ShootEvent
+
+-- ============================================================
+--  获取射击事件
+-- ============================================================
+local function findShootEvent()
+    for _, v in pairs(ReplicatedStorage:GetDescendants()) do
+        if v.Name == "Shoot" or v.Name == "ShootEvent" or v.Name == "Fire" then
+            ShootEvent = v
+            return
+        end
+    end
+end
+findShootEvent()
 
 -- ============================================================
 --  工具函数
@@ -57,11 +47,6 @@ local ESP表 = {}
 local function 是否敌人(p)
     if p == LocalPlayer then return false end
     if p.Team and LocalPlayer.Team and p.Team == LocalPlayer.Team then return false end
-    local c = p.Character
-    if c then
-        local root = c:FindFirstChild("HumanoidRootPart")
-        if root and root:FindFirstChild("TeammateLabel") then return false end
-    end
     return true
 end
 
@@ -74,8 +59,7 @@ end
 
 local function 获取目标部位(c)
     if not c then return nil end
-    if Config.目标部位 == "头" then return c:FindFirstChild("Head") end
-    return c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Head")
+    return c:FindFirstChild("Head") or c:FindFirstChild("HumanoidRootPart")
 end
 
 local function 获取最近敌人()
@@ -94,15 +78,17 @@ local function 获取最近敌人()
         local dist = (Vector2.new(pos.X, pos.Y) - mouse).Magnitude
         if dist < 最近距离 then
             最近距离 = dist
-            最近 = {player = p, part = part, pos = pos}
+            最近 = {player = p, part = part}
         end
     end
     return 最近
 end
 
 -- ============================================================
---  彩虹透明武器
+--  功能函数
 -- ============================================================
+
+-- 1. 彩虹武器
 local function 彩虹效果()
     if not Config.彩虹 then return end
     local c = LocalPlayer.Character
@@ -124,20 +110,7 @@ local function 彩虹效果()
     if bp then for _, t in pairs(bp:GetChildren()) do if t:IsA("Tool") then 扫描(t) end end end
 end
 
--- ============================================================
---  透视
--- ============================================================
-local function 获取职业(p)
-    if not p then return "未知"
-    if p.Team then
-        local n = p.Team.Name
-        if n == "Police" or n == "POLICE" or n == "警察" then return "👮警察"
-        if n == "Inmates" or n == "囚犯" then return "🧑囚犯"
-        if n == "Criminals" or n == "罪犯" then return "🔫罪犯"
-    end
-    return "未知"
-end
-
+-- 2. 透视
 local function 创建透视(p)
     if p == LocalPlayer then return end
     local c = p.Character
@@ -148,26 +121,12 @@ local function 创建透视(p)
     hl.FillColor = 是否敌人(p) and Color3.fromRGB(255,0,0) or Color3.fromRGB(0,255,0)
     hl.Adornee = c
     hl.Parent = c
-    local bb = Instance.new("BillboardGui")
-    bb.AlwaysOnTop = true
-    bb.Size = UDim2.new(0, 180, 0, 40)
-    bb.StudsOffset = Vector3.new(0, 2.5, 0)
-    bb.Parent = c
-    local lb = Instance.new("TextLabel")
-    lb.BackgroundTransparency = 1
-    lb.Size = UDim2.new(1,0,1,0)
-    lb.Font = Enum.Font.GothamBold
-    lb.TextSize = 12
-    lb.TextColor3 = Color3.fromRGB(255,255,255)
-    lb.TextStrokeTransparency = 0.3
-    lb.Text = p.DisplayName .. "\n" .. 获取职业(p)
-    lb.Parent = bb
-    ESP表[p] = {hl = hl, bb = bb}
+    ESP表[p] = hl
 end
 
 local function 更新透视()
     if not Config.透视 then
-        for _, d in pairs(ESP表) do pcall(function() d.hl:Destroy(); d.bb:Destroy() end) end
+        for _, hl in pairs(ESP表) do pcall(function() hl:Destroy() end) end
         ESP表 = {}
         return
     end
@@ -178,20 +137,14 @@ local function 更新透视()
     end
 end
 
--- ============================================================
---  静默自瞄
--- ============================================================
-local ShootEvent
-local function findShootEvent()
-    for _, v in pairs(ReplicatedStorage:GetDescendants()) do
-        if v.Name == "Shoot" or v.Name == "ShootEvent" or v.Name == "Fire" then
-            ShootEvent = v
-            return
-        end
-    end
-end
-findShootEvent()
+Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if Config.透视 then 创建透视(p) end
+    end)
+end)
 
+-- 3. 静默自瞄
 local function 静默自瞄射击()
     if not Config.静默 then return end
     if not ShootEvent then return end
@@ -207,9 +160,7 @@ local function 静默自瞄射击()
     pcall(function() ShootEvent:FireServer(data) end)
 end
 
--- ============================================================
---  子追
--- ============================================================
+-- 4. 子追
 local function 子追拦截射线()
     if not Config.子追 then return end
     local target = 获取最近敌人()
@@ -225,9 +176,7 @@ local function 子追拦截射线()
     task.spawn(function() task.wait(0.01); Workspace.Raycast = old end)
 end
 
--- ============================================================
---  秒射
--- ============================================================
+-- 5. 秒射
 local function 秒射修改武器()
     if not Config.秒射 then return end
     local c = LocalPlayer.Character
@@ -246,20 +195,7 @@ local function 秒射修改武器()
     end
 end
 
--- ============================================================
---  主循环
--- ============================================================
-local function 主循环()
-    if Config.彩虹 then 彩虹效果() end
-    if Config.透视 then 更新透视() end
-    if Config.静默 then 静默自瞄射击() end
-    if Config.子追 then 子追拦截射线() end
-    if Config.秒射 then 秒射修改武器() end
-end
-
-RunService.Heartbeat:Connect(主循环)
-
--- 连点（按住左键）
+-- 6. 连点
 UserInputService.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 and Config.连点 then
         task.spawn(function()
@@ -275,104 +211,187 @@ UserInputService.InputBegan:Connect(function(input)
     end
 end)
 
+-- ============================================================
+--  主循环
+-- ============================================================
+local function 主循环()
+    if Config.彩虹 then 彩虹效果() end
+    if Config.透视 then 更新透视() end
+    if Config.静默 then 静默自瞄射击() end
+    if Config.子追 then 子追拦截射线() end
+    if Config.秒射 then 秒射修改武器() end
+end
+
+RunService.Heartbeat:Connect(主循环)
+
 LocalPlayer.CharacterAdded:Connect(function() task.wait(0.5) end)
 
 -- ============================================================
---  UI 构建
+--  UI（你的Yu UI框架）
 -- ============================================================
 
--- ===== 主标签页 =====
-local MainTab = Window:Tab({
-    Title = "战斗",
-    Icon = "sword",
-})
+local gui = Instance.new("ScreenGui")
+gui.Name = "YuUI"
+gui.ResetOnSpawn = false
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
--- 左侧分组：自瞄
-local AimGroup = MainTab:LeftGroupbox("🎯 自瞄设置")
+-- 主窗口
+local Main = Instance.new("Frame")
+Main.Size = UDim2.new(0, 340, 0, 360)
+Main.Position = UDim2.new(0.5, -170, 0.5, -180)
+Main.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+Main.BorderSizePixel = 0
+Main.Parent = gui
 
-AimGroup:Toggle({
-    Title = "子追（子弹追踪）",
-    Value = false,
-    Callback = function(v) Config.子追 = v end
-})
+local Corner = Instance.new("UICorner")
+Corner.CornerRadius = UDim.new(0, 15)
+Corner.Parent = Main
 
-AimGroup:Toggle({
-    Title = "静默自瞄",
-    Value = false,
-    Callback = function(v) Config.静默 = v end
-})
+-- 彩色边框
+local Stroke = Instance.new("UIStroke")
+Stroke.Thickness = 3
+Stroke.Parent = Main
 
-AimGroup:Dropdown({
-    Title = "瞄准部位",
-    Values = {"头", "身体"},
-    Value = "头",
-    Callback = function(v) Config.目标部位 = v end
-})
-
-AimGroup:Slider({
-    Title = "FOV 范围",
-    Value = 200,
-    Min = 30,
-    Max = 500,
-    Callback = function(v) Config.FOV = v end
-})
-
--- 右侧分组：武器
-local WeaponGroup = MainTab:RightGroupbox("⚡ 武器设置")
-
-WeaponGroup:Toggle({
-    Title = "彩虹透明武器",
-    Value = true,
-    Callback = function(v) Config.彩虹 = v end
-})
-
-WeaponGroup:Toggle({
-    Title = "秒射（极速连发）",
-    Value = false,
-    Callback = function(v) Config.秒射 = v end
-})
-
-WeaponGroup:Toggle({
-    Title = "自动连点",
-    Value = true,
-    Callback = function(v) Config.连点 = v end
-})
-
--- ===== 视觉标签页 =====
-local VisualTab = Window:Tab({
-    Title = "视觉",
-    Icon = "eye",
-})
-
-local VisualGroup = VisualTab:LeftGroupbox("👁️ 透视设置")
-
-VisualGroup:Toggle({
-    Title = "启用玩家透视",
-    Value = false,
-    Callback = function(v)
-        Config.透视 = v
-        if v then 更新透视() end
+task.spawn(function()
+    while Stroke and Stroke.Parent do
+        for i = 0, 1, 0.02 do
+            Stroke.Color = Color3.fromHSV(i, 1, 1)
+            task.wait()
+        end
     end
-})
+end)
 
--- ===== 设置标签页 =====
-local SettingsTab = Window:Tab({
-    Title = "设置",
-    Icon = "settings",
-})
+-- 标题
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 45)
+Title.BackgroundTransparency = 1
+Title.Text = "🏛️ 监狱辅助"
+Title.TextColor3 = Color3.new(1, 1, 1)
+Title.TextScaled = true
+Title.Parent = Main
 
-local SettingsGroup = SettingsTab:LeftGroupbox("⚙️ 通用设置")
+-- 关闭按钮
+local Close = Instance.new("TextButton")
+Close.Size = UDim2.new(0, 40, 0, 40)
+Close.Position = UDim2.new(1, -45, 0, 5)
+Close.Text = "✕"
+Close.TextScaled = true
+Close.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+Close.Parent = Main
+Instance.new("UICorner", Close).CornerRadius = UDim.new(0, 6)
 
-SettingsGroup:Button({
-    Title = "卸载脚本",
-    Callback = function()
-        Window:Close()
+Close.MouseButton1Click:Connect(function()
+    gui:Destroy()
+end)
+
+-- 拖动
+local dragging = false
+local dragStart, startPos
+
+Title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
     end
-})
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UIS.InputEnded:Connect(function()
+    dragging = false
+end)
 
 -- ============================================================
---  完成
+--  创建按钮
 -- ============================================================
-print("✅ 监狱辅助 V5（WindUI）已加载")
-print("📌 按 RightShift 显示/隐藏菜单")
-print("🌈 彩虹武器默认开启 | 功能请在菜单中开关")
+local y = 60
+
+local function CreateButton(text, getter, setter)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -20, 0, 35)
+    frame.Position = UDim2.new(0, 10, 0, y)
+    frame.BackgroundTransparency = 1
+    frame.Parent = Main
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.5, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(220, 220, 220)
+    label.TextSize = 14
+    label.Font = Enum.Font.GothamBold
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+    
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 65, 0, 28)
+    btn.Position = UDim2.new(1, -70, 0.5, -14)
+    btn.BackgroundColor3 = getter() and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
+    btn.BackgroundTransparency = 0.2
+    btn.Text = getter() and "开启" or "关闭"
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 13
+    btn.Font = Enum.Font.GothamBold
+    btn.Parent = frame
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+    
+    btn.MouseButton1Click:Connect(function()
+        local v = not getter()
+        setter(v)
+        btn.Text = v and "开启" or "关闭"
+        btn.BackgroundColor3 = v and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
+    end)
+    
+    y = y + 40
+end
+
+-- 创建所有按钮
+CreateButton("🌈 彩虹武器", function() return Config.彩虹 end, function(v) Config.彩虹 = v end)
+CreateButton("👁️ 透视", function() return Config.透视 end, function(v) Config.透视 = v end)
+CreateButton("🔫 连点", function() return Config.连点 end, function(v) Config.连点 = v end)
+CreateButton("⚡ 秒射", function() return Config.秒射 end, function(v) Config.秒射 = v end)
+CreateButton("🎯 子追", function() return Config.子追 end, function(v) Config.子追 = v end)
+CreateButton("🔇 静默自瞄", function() return Config.静默 end, function(v) Config.静默 = v end)
+
+-- 底部信息
+local Info = Instance.new("TextLabel")
+Info.Size = UDim2.new(1, 0, 0, 18)
+Info.Position = UDim2.new(0, 0, 0, 325)
+Info.BackgroundTransparency = 1
+Info.Text = "按住左键连发 | 拖动窗口 | 彩色边框"
+Info.TextColor3 = Color3.fromRGB(160, 160, 180)
+Info.TextSize = 11
+Info.Font = Enum.Font.Gotham
+Info.TextXAlignment = Enum.TextXAlignment.Center
+Info.Parent = Main
+
+-- ============================================================
+--  悬浮球
+-- ============================================================
+local Ball = Instance.new("TextButton")
+Ball.Size = UDim2.new(0, 55, 0, 55)
+Ball.Position = UDim2.new(0.01, 0, 0.5, 0)
+Ball.Text = "🏛️"
+Ball.TextScaled = true
+Ball.BackgroundColor3 = Color3.fromRGB(80, 0, 255)
+Ball.BackgroundTransparency = 0.2
+Ball.Parent = gui
+Instance.new("UICorner", Ball).CornerRadius = UDim.new(1, 0)
+
+Ball.MouseButton1Click:Connect(function()
+    Main.Visible = not Main.Visible
+end)
+
+print("✅ Yu UI 监狱辅助完整版已加载")
+print("📌 点击悬浮球开关菜单")
