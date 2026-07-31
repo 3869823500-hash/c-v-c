@@ -1,5 +1,5 @@
 -- ============================================================
---  WindUI 版本（加载失败自动切备用）
+--  多音效版（可切换音效）
 -- ============================================================
 
 local player = game.Players.LocalPlayer
@@ -9,9 +9,18 @@ local uis = game:GetService("UserInputService")
 
 print("✅ 脚本开始运行")
 
--- ===== 删除旧UI =====
-local old = player.PlayerGui:FindFirstChild("CombatUI")
-if old then old:Destroy() end
+-- ===== 不删除UI =====
+local sg = player.PlayerGui:FindFirstChild("CombatUI")
+if not sg then
+    sg = Instance.new("ScreenGui")
+    sg.Name = "CombatUI"
+    sg.ResetOnSpawn = false
+    sg.DisplayOrder = 99999
+    sg.Parent = player:WaitForChild("PlayerGui")
+    print("✅ 新UI已创建")
+else
+    print("✅ UI已存在，复用")
+end
 
 -- ===== 获取事件 =====
 local meleeEvent = rs:FindFirstChild("meleeEvent")
@@ -27,9 +36,47 @@ end
 local fistOn = false
 local gunOn = false
 local espOn = true
+local wallOn = true
+local rainbowOn = true
+local soundOn = true
 local range = 70
 local lastFist = 0
 local lastGun = 0
+local lastSound = 0
+local playedSound = {}
+
+-- ============================================================
+--  🔊 多个音效（随便切换）
+-- ============================================================
+
+local soundList = {
+    {Name = "超级击杀", ID = "92723765069002"},
+    {Name = "我们之中", ID = "7227567562"},
+    {Name = "怪物杀戮", ID = "132012038491424"},
+    {Name = "叮", ID = "2866718318"},
+    {Name = "鲜血", ID = "128741351184513"},
+    {Name = "黄金", ID = "18888511866"},
+    {Name = "瓦洛兰特", ID = "18560690982"},
+    {Name = "咚", ID = "7269900245"},
+    {Name = "动漫", ID = "80440627510518"},
+    {Name = "现代战争", ID = "130439616552357"},
+    {Name = "战斗", ID = "7228383943"},
+    {Name = "呀", ID = "111609064980370"},
+    {Name = "咯", ID = "80847075127412"},
+}
+
+local selectedSound = soundList[1]
+local soundIndex = 1
+
+local function playSound(id)
+    if not soundOn or not id then return end
+    local snd = Instance.new("Sound")
+    snd.SoundId = "rbxassetid://" .. id
+    snd.Volume = 1
+    snd.Parent = workspace.CurrentCamera
+    snd:Play()
+    task.delay(2, function() if snd then snd:Destroy() end end)
+end
 
 -- ============================================================
 --  🎯 阵营检测
@@ -58,6 +105,41 @@ local function isEnemy(target)
 end
 
 -- ============================================================
+--  🧱 墙壁检测
+-- ============================================================
+
+local function isVisible(targetPart)
+    if not wallOn then return true end
+    local char = player.Character
+    if not char or not targetPart then return false end
+    local origin = char:FindFirstChild("Head")
+    if not origin then return false end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {char}
+    params.IgnoreWater = true
+    local direction = targetPart.Position - origin.Position
+    local result = workspace:Raycast(origin.Position, direction, params)
+    if result then
+        return result.Instance:IsDescendantOf(targetPart.Parent)
+    end
+    return true
+end
+
+-- ============================================================
+--  🔫 检测是否拿枪
+-- ============================================================
+
+local function hasWeapon()
+    local char = player.Character
+    if not char then return false end
+    for _, v in pairs(char:GetChildren()) do
+        if v:IsA("Tool") then return true end
+    end
+    return false
+end
+
+-- ============================================================
 --  🎯 获取目标
 -- ============================================================
 
@@ -70,6 +152,7 @@ local function getTarget()
             if char then
                 local part = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
                 if part then
+                    if not isVisible(part) then continue end
                     local dist = (part.Position - cam.CFrame.Position).Magnitude
                     if dist < closestDist and dist <= range then
                         closest = p
@@ -87,6 +170,7 @@ end
 -- ============================================================
 
 local function createRedTrail(origin, targetPos)
+    if not hasWeapon() then return end
     local dist = (origin - targetPos).Magnitude
     if dist < 1 then return end
     local trail = Instance.new("Part")
@@ -120,6 +204,28 @@ local function shoot()
     createRedTrail(origin, targetPos)
     local args = {{origin, targetPos, targetPart}}
     pcall(function() ShootEvent:FireServer(unpack(args)) end)
+    -- 击杀音效
+    if target then
+        local now = tick()
+        if now - lastSound > 0.5 then
+            local charTarget = target.Character
+            local isDead = false
+            if not charTarget then
+                isDead = true
+            else
+                local hum = charTarget:FindFirstChildOfClass("Humanoid")
+                if not hum or hum.Health <= 0 then
+                    isDead = true
+                end
+            end
+            if isDead and not playedSound[target] then
+                playSound(selectedSound.ID)
+                lastSound = now
+                playedSound[target] = true
+                print("💀 击杀: " .. target.Name .. " 音效: " .. selectedSound.Name)
+            end
+        end
+    end
 end
 
 -- ============================================================
@@ -222,30 +328,90 @@ runService.Heartbeat:Connect(function()
 end)
 
 -- ============================================================
---  🎨 加载 WindUI
+--  🌈 彩虹美化
 -- ============================================================
 
-local WindUI = nil
-local useWindUI = false
+local rainbowColors = {
+    Color3.fromRGB(255, 0, 0), Color3.fromRGB(255, 165, 0), Color3.fromRGB(255, 255, 0),
+    Color3.fromRGB(0, 255, 0), Color3.fromRGB(0, 255, 255), Color3.fromRGB(0, 0, 255),
+    Color3.fromRGB(255, 0, 255), Color3.fromRGB(255, 20, 147),
+}
+local originalColors = {}
+local originalMaterials = {}
+local originalTransparency = {}
 
-local function createNativeUI()
-    print("📌 使用备用UI")
-    
-    local sg = Instance.new("ScreenGui")
-    sg.Name = "CombatUI"
-    sg.ResetOnSpawn = false
-    sg.DisplayOrder = 99999
-    sg.Parent = player:WaitForChild("PlayerGui")
+local function getWeaponParts()
+    local parts = {}
+    local char = player.Character
+    if not char then return parts end
+    for _, tool in pairs(char:GetChildren()) do
+        if tool:IsA("Tool") then
+            for _, child in pairs(tool:GetDescendants()) do
+                if child:IsA("BasePart") or child:IsA("MeshPart") or child:IsA("Part") then
+                    table.insert(parts, child)
+                end
+            end
+        end
+    end
+    return parts
+end
 
-    local f = Instance.new("Frame")
-    f.Size = UDim2.new(0, 160, 0, 200)
-    f.Position = UDim2.new(0.02, 0, 0.2, 0)
+local function applyRainbow()
+    if not rainbowOn then return end
+    local parts = getWeaponParts()
+    if #parts == 0 then return end
+    for _, part in pairs(parts) do
+        if not originalColors[part] then
+            originalColors[part] = part.Color
+            originalMaterials[part] = part.Material
+            originalTransparency[part] = part.Transparency
+        end
+        local color = rainbowColors[math.random(1, #rainbowColors)]
+        pcall(function()
+            part.Color = color
+            part.Material = Enum.Material.Neon
+            part.Transparency = 0.3
+        end)
+    end
+end
+
+local function restoreWeaponColors()
+    for part, color in pairs(originalColors) do
+        pcall(function()
+            part.Color = color
+            part.Material = originalMaterials[part] or Enum.Material.Plastic
+            part.Transparency = originalTransparency[part] or 0
+        end)
+    end
+    table.clear(originalColors)
+    table.clear(originalMaterials)
+    table.clear(originalTransparency)
+end
+
+runService.Heartbeat:Connect(function()
+    applyRainbow()
+end)
+
+-- ============================================================
+--  🎨 UI
+-- ============================================================
+
+local f = sg:FindFirstChild("MainFrame")
+if not f then
+    f = Instance.new("Frame")
+    f.Name = "MainFrame"
+    f.Size = UDim2.new(0, 180, 0, 230)
+    f.Position = UDim2.new(0.02, 0, 0.15, 0)
     f.BackgroundColor3 = Color3.fromRGB(15, 15, 30)
     f.BackgroundTransparency = 0.1
     Instance.new("UICorner", f).CornerRadius = UDim.new(0, 10)
     f.Parent = sg
+end
 
-    local title = Instance.new("TextLabel")
+local title = f:FindFirstChild("Title")
+if not title then
+    title = Instance.new("TextLabel")
+    title.Name = "Title"
     title.Size = UDim2.new(1, 0, 0, 28)
     title.BackgroundTransparency = 1
     title.Text = "⚔️ 战斗"
@@ -253,211 +419,297 @@ local function createNativeUI()
     title.TextSize = 14
     title.Font = Enum.Font.GothamBold
     title.Parent = f
-
-    local fistBg = Instance.new("Frame")
-    fistBg.Size = UDim2.new(0, 130, 0, 30)
-    fistBg.Position = UDim2.new(0.5, -65, 0, 38)
-    fistBg.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-    fistBg.BackgroundTransparency = 0.2
-    Instance.new("UICorner", fistBg).CornerRadius = UDim.new(0, 6)
-    fistBg.Parent = f
-
-    local fistBtn = Instance.new("TextButton")
-    fistBtn.Size = UDim2.new(1, 0, 1, 0)
-    fistBtn.BackgroundTransparency = 1
-    fistBtn.Text = "🥊 拳头 ❌"
-    fistBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
-    fistBtn.TextSize = 13
-    fistBtn.Font = Enum.Font.GothamBold
-    fistBtn.Parent = fistBg
-
-    local gunBg = Instance.new("Frame")
-    gunBg.Size = UDim2.new(0, 130, 0, 30)
-    gunBg.Position = UDim2.new(0.5, -65, 0, 78)
-    gunBg.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-    gunBg.BackgroundTransparency = 0.2
-    Instance.new("UICorner", gunBg).CornerRadius = UDim.new(0, 6)
-    gunBg.Parent = f
-
-    local gunBtn = Instance.new("TextButton")
-    gunBtn.Size = UDim2.new(1, 0, 1, 0)
-    gunBtn.BackgroundTransparency = 1
-    gunBtn.Text = "🔫 枪械 ❌"
-    gunBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
-    gunBtn.TextSize = 13
-    gunBtn.Font = Enum.Font.GothamBold
-    gunBtn.Parent = gunBg
-
-    local espBg = Instance.new("Frame")
-    espBg.Size = UDim2.new(0, 130, 0, 30)
-    espBg.Position = UDim2.new(0.5, -65, 0, 118)
-    espBg.BackgroundColor3 = Color3.fromRGB(60, 200, 80)
-    espBg.BackgroundTransparency = 0.2
-    Instance.new("UICorner", espBg).CornerRadius = UDim.new(0, 6)
-    espBg.Parent = f
-
-    local espBtn = Instance.new("TextButton")
-    espBtn.Size = UDim2.new(1, 0, 1, 0)
-    espBtn.BackgroundTransparency = 1
-    espBtn.Text = "👁️ 透视 ✅"
-    espBtn.TextColor3 = Color3.fromRGB(100, 255, 100)
-    espBtn.TextSize = 13
-    espBtn.Font = Enum.Font.GothamBold
-    espBtn.Parent = espBg
-
-    local info = Instance.new("TextLabel")
-    info.Size = UDim2.new(1, 0, 0, 16)
-    info.Position = UDim2.new(0, 0, 0, 160)
-    info.BackgroundTransparency = 1
-    info.Text = "范围: 70"
-    info.TextColor3 = Color3.fromRGB(150, 150, 200)
-    info.TextSize = 10
-    info.Font = Enum.Font.Gotham
-    info.Parent = f
-
-    fistBtn.MouseButton1Click:Connect(function()
-        fistOn = not fistOn
-        fistBtn.Text = fistOn and "🥊 拳头 ✅" or "🥊 拳头 ❌"
-        fistBtn.TextColor3 = fistOn and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
-        fistBg.BackgroundColor3 = fistOn and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
-    end)
-
-    gunBtn.MouseButton1Click:Connect(function()
-        gunOn = not gunOn
-        gunBtn.Text = gunOn and "🔫 枪械 ✅" or "🔫 枪械 ❌"
-        gunBtn.TextColor3 = gunOn and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
-        gunBg.BackgroundColor3 = gunOn and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
-    end)
-
-    espBtn.MouseButton1Click:Connect(function()
-        espOn = not espOn
-        espBtn.Text = espOn and "👁️ 透视 ✅" or "👁️ 透视 ❌"
-        espBtn.TextColor3 = espOn and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
-        espBg.BackgroundColor3 = espOn and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
-        updateESP()
-    end)
-
-    local drag = false
-    local dx, dy, startPos
-    title.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            drag = true
-            dx = input.Position.X
-            dy = input.Position.Y
-            startPos = f.Position
-        end
-    end)
-    uis.InputChanged:Connect(function(input)
-        if drag and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            f.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + (input.Position.X - dx), startPos.Y.Scale, startPos.Y.Offset + (input.Position.Y - dy))
-        end
-    end)
-    uis.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            drag = false
-        end
-    end)
 end
 
--- ===== 尝试加载 WindUI =====
-local function loadWindUI()
-    print("📌 正在加载 WindUI...")
-    local ok, err = pcall(function()
-        local url = "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"
-        local result = game:HttpGet(url)
-        if result then
-            WindUI = loadstring(result)()
-        end
+local function createSwitch(y, icon, name, default, callback)
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(0, 150, 0, 28)
+    bg.Position = UDim2.new(0.5, -75, 0, y)
+    bg.BackgroundColor3 = default and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
+    bg.BackgroundTransparency = 0.2
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 6)
+    bg.Parent = f
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0, 70, 0, 26)
+    label.Position = UDim2.new(0, 6, 0.5, -13)
+    label.BackgroundTransparency = 1
+    label.Text = icon .. " " .. name
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextSize = 12
+    label.Font = Enum.Font.GothamBold
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = bg
+    
+    local status = Instance.new("TextLabel")
+    status.Size = UDim2.new(0, 16, 0, 16)
+    status.Position = UDim2.new(0, 85, 0.5, -8)
+    status.BackgroundTransparency = 1
+    status.Text = default and "✅" or "❌"
+    status.TextColor3 = default and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
+    status.TextSize = 12
+    status.Parent = bg
+    
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 40, 0, 22)
+    btn.Position = UDim2.new(1, -44, 0.5, -11)
+    btn.BackgroundTransparency = 1
+    btn.Text = default and "关" or "开"
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 11
+    btn.Font = Enum.Font.GothamBold
+    btn.Parent = bg
+    
+    btn.MouseButton1Click:Connect(function()
+        local state = not default
+        default = state
+        btn.Text = state and "关" or "开"
+        bg.BackgroundColor3 = state and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
+        status.Text = state and "✅" or "❌"
+        status.TextColor3 = state and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
+        callback(state)
     end)
     
-    if ok and WindUI then
-        print("✅ WindUI 加载成功")
-        useWindUI = true
-        return true
-    else
-        print("❌ WindUI 加载失败: " .. tostring(err))
-        return false
+    return bg
+end
+
+-- 拳头
+local fistY = 36
+local fistBg = Instance.new("Frame")
+fistBg.Size = UDim2.new(0, 150, 0, 28)
+fistBg.Position = UDim2.new(0.5, -75, 0, fistY)
+fistBg.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+fistBg.BackgroundTransparency = 0.2
+Instance.new("UICorner", fistBg).CornerRadius = UDim.new(0, 6)
+fistBg.Parent = f
+
+local fistLabel = Instance.new("TextLabel")
+fistLabel.Size = UDim2.new(0, 70, 0, 26)
+fistLabel.Position = UDim2.new(0, 6, 0.5, -13)
+fistLabel.BackgroundTransparency = 1
+fistLabel.Text = "🥊 拳头"
+fistLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+fistLabel.TextSize = 12
+fistLabel.Font = Enum.Font.GothamBold
+fistLabel.TextXAlignment = Enum.TextXAlignment.Left
+fistLabel.Parent = fistBg
+
+local fistStatus = Instance.new("TextLabel")
+fistStatus.Size = UDim2.new(0, 16, 0, 16)
+fistStatus.Position = UDim2.new(0, 85, 0.5, -8)
+fistStatus.BackgroundTransparency = 1
+fistStatus.Text = "❌"
+fistStatus.TextColor3 = Color3.fromRGB(255, 80, 80)
+fistStatus.TextSize = 12
+fistStatus.Parent = fistBg
+
+local fistBtn = Instance.new("TextButton")
+fistBtn.Size = UDim2.new(0, 40, 0, 22)
+fistBtn.Position = UDim2.new(1, -44, 0.5, -11)
+fistBtn.BackgroundTransparency = 1
+fistBtn.Text = "开"
+fistBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+fistBtn.TextSize = 11
+fistBtn.Font = Enum.Font.GothamBold
+fistBtn.Parent = fistBg
+
+fistBtn.MouseButton1Click:Connect(function()
+    fistOn = not fistOn
+    fistBtn.Text = fistOn and "关" or "开"
+    fistBg.BackgroundColor3 = fistOn and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
+    fistStatus.Text = fistOn and "✅" or "❌"
+    fistStatus.TextColor3 = fistOn and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
+end)
+
+-- 枪械
+local gunY = 72
+local gunBg = Instance.new("Frame")
+gunBg.Size = UDim2.new(0, 150, 0, 28)
+gunBg.Position = UDim2.new(0.5, -75, 0, gunY)
+gunBg.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+gunBg.BackgroundTransparency = 0.2
+Instance.new("UICorner", gunBg).CornerRadius = UDim.new(0, 6)
+gunBg.Parent = f
+
+local gunLabel = Instance.new("TextLabel")
+gunLabel.Size = UDim2.new(0, 70, 0, 26)
+gunLabel.Position = UDim2.new(0, 6, 0.5, -13)
+gunLabel.BackgroundTransparency = 1
+gunLabel.Text = "🔫 枪械"
+gunLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+gunLabel.TextSize = 12
+gunLabel.Font = Enum.Font.GothamBold
+gunLabel.TextXAlignment = Enum.TextXAlignment.Left
+gunLabel.Parent = gunBg
+
+local gunStatus = Instance.new("TextLabel")
+gunStatus.Size = UDim2.new(0, 16, 0, 16)
+gunStatus.Position = UDim2.new(0, 85, 0.5, -8)
+gunStatus.BackgroundTransparency = 1
+gunStatus.Text = "❌"
+gunStatus.TextColor3 = Color3.fromRGB(255, 80, 80)
+gunStatus.TextSize = 12
+gunStatus.Parent = gunBg
+
+local gunBtn = Instance.new("TextButton")
+gunBtn.Size = UDim2.new(0, 40, 0, 22)
+gunBtn.Position = UDim2.new(1, -44, 0.5, -11)
+gunBtn.BackgroundTransparency = 1
+gunBtn.Text = "开"
+gunBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+gunBtn.TextSize = 11
+gunBtn.Font = Enum.Font.GothamBold
+gunBtn.Parent = gunBg
+
+gunBtn.MouseButton1Click:Connect(function()
+    gunOn = not gunOn
+    gunBtn.Text = gunOn and "关" or "开"
+    gunBg.BackgroundColor3 = gunOn and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
+    gunStatus.Text = gunOn and "✅" or "❌"
+    gunStatus.TextColor3 = gunOn and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
+end)
+
+-- 透视
+local espY = 108
+local espBg = Instance.new("Frame")
+espBg.Size = UDim2.new(0, 150, 0, 28)
+espBg.Position = UDim2.new(0.5, -75, 0, espY)
+espBg.BackgroundColor3 = Color3.fromRGB(60, 200, 80)
+espBg.BackgroundTransparency = 0.2
+Instance.new("UICorner", espBg).CornerRadius = UDim.new(0, 6)
+espBg.Parent = f
+
+local espLabel = Instance.new("TextLabel")
+espLabel.Size = UDim2.new(0, 70, 0, 26)
+espLabel.Position = UDim2.new(0, 6, 0.5, -13)
+espLabel.BackgroundTransparency = 1
+espLabel.Text = "👁️ 透视"
+espLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+espLabel.TextSize = 12
+espLabel.Font = Enum.Font.GothamBold
+espLabel.TextXAlignment = Enum.TextXAlignment.Left
+espLabel.Parent = espBg
+
+local espStatus = Instance.new("TextLabel")
+espStatus.Size = UDim2.new(0, 16, 0, 16)
+espStatus.Position = UDim2.new(0, 85, 0.5, -8)
+espStatus.BackgroundTransparency = 1
+espStatus.Text = "✅"
+espStatus.TextColor3 = Color3.fromRGB(100, 255, 100)
+espStatus.TextSize = 12
+espStatus.Parent = espBg
+
+local espBtn = Instance.new("TextButton")
+espBtn.Size = UDim2.new(0, 40, 0, 22)
+espBtn.Position = UDim2.new(1, -44, 0.5, -11)
+espBtn.BackgroundTransparency = 1
+espBtn.Text = "关"
+espBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+espBtn.TextSize = 11
+espBtn.Font = Enum.Font.GothamBold
+espBtn.Parent = espBg
+
+espBtn.MouseButton1Click:Connect(function()
+    espOn = not espOn
+    espBtn.Text = espOn and "关" or "开"
+    espBg.BackgroundColor3 = espOn and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
+    espStatus.Text = espOn and "✅" or "❌"
+    espStatus.TextColor3 = espOn and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
+    updateESP()
+end)
+
+-- 音效切换按钮
+local soundY = 144
+local soundBg = Instance.new("Frame")
+soundBg.Size = UDim2.new(0, 150, 0, 28)
+soundBg.Position = UDim2.new(0.5, -75, 0, soundY)
+soundBg.BackgroundColor3 = Color3.fromRGB(60, 200, 80)
+soundBg.BackgroundTransparency = 0.2
+Instance.new("UICorner", soundBg).CornerRadius = UDim.new(0, 6)
+soundBg.Parent = f
+
+local soundLabel = Instance.new("TextLabel")
+soundLabel.Size = UDim2.new(0, 80, 0, 26)
+soundLabel.Position = UDim2.new(0, 6, 0.5, -13)
+soundLabel.BackgroundTransparency = 1
+soundLabel.Text = "🔊 " .. soundList[soundIndex].Name
+soundLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+soundLabel.TextSize = 11
+soundLabel.Font = Enum.Font.GothamBold
+soundLabel.TextXAlignment = Enum.TextXAlignment.Left
+soundLabel.Parent = soundBg
+
+local soundBtn = Instance.new("TextButton")
+soundBtn.Size = UDim2.new(0, 40, 0, 22)
+soundBtn.Position = UDim2.new(1, -44, 0.5, -11)
+soundBtn.BackgroundTransparency = 1
+soundBtn.Text = "切换"
+soundBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+soundBtn.TextSize = 11
+soundBtn.Font = Enum.Font.GothamBold
+soundBtn.Parent = soundBg
+
+soundBtn.MouseButton1Click:Connect(function()
+    soundIndex = soundIndex % #soundList + 1
+    selectedSound = soundList[soundIndex]
+    soundLabel.Text = "🔊 " .. selectedSound.Name
+    print("🔊 音效切换: " .. selectedSound.Name)
+    -- 试听一下
+    playSound(selectedSound.ID)
+end)
+
+-- 范围显示
+local rangeLabel = Instance.new("TextLabel")
+rangeLabel.Size = UDim2.new(1, 0, 0, 16)
+rangeLabel.Position = UDim2.new(0, 0, 0, 182)
+rangeLabel.BackgroundTransparency = 1
+rangeLabel.Text = "📏 范围: 70"
+rangeLabel.TextColor3 = Color3.fromRGB(150, 150, 200)
+rangeLabel.TextSize = 10
+rangeLabel.Font = Enum.Font.Gotham
+rangeLabel.Parent = f
+
+-- 阵营显示
+local teamLabel = Instance.new("TextLabel")
+teamLabel.Size = UDim2.new(1, 0, 0, 16)
+teamLabel.Position = UDim2.new(0, 0, 0, 198)
+teamLabel.BackgroundTransparency = 1
+teamLabel.Text = "👤 阵营: " .. getTeam(player)
+teamLabel.TextColor3 = Color3.fromRGB(150, 150, 200)
+teamLabel.TextSize = 10
+teamLabel.Font = Enum.Font.Gotham
+teamLabel.Parent = f
+
+-- ============================================================
+--  🖱️ 拖动
+-- ============================================================
+
+local drag = false
+local dx, dy, startPos
+
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        drag = true
+        dx = input.Position.X
+        dy = input.Position.Y
+        startPos = f.Position
     end
-end
+end)
 
--- ===== 创建 WindUI 界面 =====
-local function createWindUI()
-    print("📌 创建 WindUI 界面")
-    
-    -- 删除旧UI
-    local old = player.PlayerGui:FindFirstChild("CombatUI")
-    if old then old:Destroy() end
-    
-    local ok, err = pcall(function()
-        local Window = WindUI:CreateWindow({
-            Title = "⚔️ 战斗机器人",
-            Author = "v3.0",
-            Size = UDim2.fromOffset(550, 400),
-        })
-        
-        local mainTab = Window:Tab({
-            Title = "战斗",
-            Icon = "crosshair"
-        })
-        
-        local attackGroup = mainTab:Group({ Title = "攻击设置" })
-        attackGroup:Toggle({
-            Title = "🥊 拳头自动攻击",
-            Default = false,
-            Callback = function(state)
-                fistOn = state
-            end
-        })
-        attackGroup:Toggle({
-            Title = "🔫 枪械自动射击",
-            Default = false,
-            Callback = function(state)
-                gunOn = state
-            end
-        })
-        attackGroup:Slider({
-            Title = "📏 攻击范围",
-            Min = 30,
-            Max = 150,
-            Default = 70,
-            Step = 5,
-            Callback = function(value)
-                range = value
-            end
-        })
-        
-        local assistGroup = mainTab:Group({ Title = "辅助功能" })
-        assistGroup:Toggle({
-            Title = "👁️ 透视头（三阵营）",
-            Default = true,
-            Callback = function(state)
-                espOn = state
-                updateESP()
-            end
-        })
-        
-        local infoGroup = mainTab:Group({ Title = "信息" })
-        infoGroup:Label({ Title = "👤 阵营: " .. getTeam(player) })
-        infoGroup:Label({ Title = "🔫 ShootEvent: " .. (ShootEvent and "✅" or "❌") })
-        infoGroup:Label({ Title = "🥊 meleeEvent: " .. (meleeEvent and "✅" or "❌") })
-        
-        print("✅ WindUI 界面创建成功")
-    end)
-    
-    if not ok then
-        print("❌ WindUI 界面创建失败: " .. tostring(err))
-        useWindUI = false
-        createNativeUI()
+uis.InputChanged:Connect(function(input)
+    if drag and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        f.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + (input.Position.X - dx),
+            startPos.Y.Scale,
+            startPos.Y.Offset + (input.Position.Y - dy)
+        )
     end
-end
+end)
 
--- ===== 主加载 =====
-task.spawn(function()
-    local success = loadWindUI()
-    if success then
-        createWindUI()
-    else
-        createNativeUI()
+uis.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        drag = false
     end
 end)
 
@@ -465,11 +717,7 @@ task.wait(0.5)
 updateESP()
 
 print("========================================")
-print("✅ 脚本已加载")
-if useWindUI then
-    print("📌 使用 WindUI 界面")
-else
-    print("📌 使用备用UI")
-end
-print("🥊 拳头 | 🔫 枪械 | 👁️ 透视")
+print("✅ 全功能版已加载！")
+print("🥊 拳头 | 🔫 枪械 | 👁️ 透视 | 🔊 音效切换")
+print("📌 点击音效切换按钮选择不同音效")
 print("========================================")
