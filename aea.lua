@@ -1,125 +1,200 @@
 -- ============================================================
---  多音效版（可切换音效）
+--  监狱人生
+--  队伍颜色：警察=蓝色 | 犯人=黄色 | 罪犯=红色
+--  打死后保持原颜色，不会变蓝
+--  功能：枪械+拳头 | 红色弹道 | 透视 | 彩虹美化 | 墙壁检测
+--  击杀音效（双重保险，每杀必播） | 不打尸体
+--  罪犯打犯人 开关控制
 -- ============================================================
 
-local player = game.Players.LocalPlayer
-local rs = game:GetService("ReplicatedStorage")
-local runService = game:GetService("RunService")
-local uis = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Debris = game:GetService("Debris")
 
-print("✅ 脚本开始运行")
+local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local PlayerGui = player:WaitForChild("PlayerGui")
+local Camera = workspace.CurrentCamera
 
--- ===== 不删除UI =====
-local sg = player.PlayerGui:FindFirstChild("CombatUI")
-if not sg then
-    sg = Instance.new("ScreenGui")
-    sg.Name = "CombatUI"
-    sg.ResetOnSpawn = false
-    sg.DisplayOrder = 99999
-    sg.Parent = player:WaitForChild("PlayerGui")
-    print("✅ 新UI已创建")
-else
-    print("✅ UI已存在，复用")
-end
+local oldGui = PlayerGui:FindFirstChild("PrisonLife")
+if oldGui then oldGui:Destroy() end
 
--- ===== 获取事件 =====
-local meleeEvent = rs:FindFirstChild("meleeEvent")
-local ShootEvent = rs:FindFirstChild("ShootEvent")
-if not ShootEvent then
-    local GunRemotes = rs:FindFirstChild("GunRemotes")
-    if GunRemotes then
-        ShootEvent = GunRemotes:FindFirstChild("ShootEvent")
-    end
-end
+-- ========== 设置 ==========
+local settings = {
+    gunEnabled = false,
+    fistEnabled = false,
+    wallCheck = true,
+    range = 800,
+    gunInterval = 0.02,
+    fistInterval = 0.00001,
+    aimPart = "Head",
+    rainbowEnabled = true,
+    soundEnabled = true,
+    espEnabled = true,
+    criminalAttackPrisoner = false,  -- 罪犯打犯人开关
+}
 
--- ===== 参数 =====
-local fistOn = false
-local gunOn = false
-local espOn = true
-local wallOn = true
-local rainbowOn = true
-local soundOn = true
-local range = 70
-local lastFist = 0
-local lastGun = 0
-local lastSound = 0
-local playedSound = {}
+-- ========== 远程事件 ==========
+local meleeEvent = ReplicatedStorage:FindFirstChild("meleeEvent")
+local GunRemotes = ReplicatedStorage:FindFirstChild("GunRemotes")
+local ShootEvent = GunRemotes and GunRemotes:FindFirstChild("ShootEvent") or ReplicatedStorage:FindFirstChild("ShootEvent")
+
+print("meleeEvent:", meleeEvent)
+print("ShootEvent:", ShootEvent)
 
 -- ============================================================
---  🔊 多个音效（随便切换）
+--  音效
 -- ============================================================
 
-local soundList = {
+local killSounds = {
     {Name = "超级击杀", ID = "92723765069002"},
-    {Name = "我们之中", ID = "7227567562"},
-    {Name = "怪物杀戮", ID = "132012038491424"},
     {Name = "叮", ID = "2866718318"},
     {Name = "鲜血", ID = "128741351184513"},
     {Name = "黄金", ID = "18888511866"},
-    {Name = "瓦洛兰特", ID = "18560690982"},
-    {Name = "咚", ID = "7269900245"},
-    {Name = "动漫", ID = "80440627510518"},
-    {Name = "现代战争", ID = "130439616552357"},
     {Name = "战斗", ID = "7228383943"},
-    {Name = "呀", ID = "111609064980370"},
-    {Name = "咯", ID = "80847075127412"},
 }
-
-local selectedSound = soundList[1]
 local soundIndex = 1
+local selectedSound = killSounds[1].ID
+local playedSoundForPlayer = {}
+local myTarget = nil
 
-local function playSound(id)
-    if not soundOn or not id then return end
+local function playSoundSafe(id)
+    if not settings.soundEnabled or not id then return end
     local snd = Instance.new("Sound")
     snd.SoundId = "rbxassetid://" .. id
-    snd.Volume = 1
-    snd.Parent = workspace.CurrentCamera
+    snd.Volume = 2
+    snd.Parent = Camera
     snd:Play()
-    task.delay(2, function() if snd then snd:Destroy() end end)
+    task.delay(3, function() if snd then snd:Destroy() end end)
 end
 
 -- ============================================================
---  🎯 阵营检测
+--  队伍颜色（警察=蓝 | 犯人=黄 | 罪犯=红）
 -- ============================================================
 
-local function getTeam(target)
-    if not target then return "unknown"
+local function getPlayerTeamColor(target)
+    if not target then return Color3.fromRGB(128, 128, 128) end
     local team = target.Team
     if team then
         local name = string.lower(team.Name)
-        if name:find("police") or name:find("cop") or name:find("guard") then return "警察"
-        if name:find("prisoner") or name:find("inmate") then return "囚犯"
-        if name:find("criminal") or name:find("犯人") then return "犯人"
+        if name:find("police") or name:find("cop") or name:find("guard") then
+            return Color3.fromRGB(0, 150, 255)
+        elseif name:find("犯人") or name:find("prisoner") or name:find("inmate") then
+            return Color3.fromRGB(255, 255, 0)
+        elseif name:find("罪犯") or name:find("criminal") then
+            return Color3.fromRGB(255, 0, 0)
+        end
     end
-    return "unknown"
+    return Color3.fromRGB(128, 128, 128)
 end
 
+local function getPlayerTeamName(target)
+    if not target then return "未知" end
+    local team = target.Team
+    if team then
+        local name = string.lower(team.Name)
+        if name:find("police") or name:find("cop") or name:find("guard") then
+            return "警察"
+        elseif name:find("犯人") or name:find("prisoner") or name:find("inmate") then
+            return "犯人"
+        elseif name:find("罪犯") or name:find("criminal") then
+            return "罪犯"
+        end
+    end
+    return "未知"
+end
+
+-- ============================================================
+--  队伍检测（不打尸体 + 罪犯打犯人开关）
+-- ============================================================
+
+local function isAlive(target)
+    if not target then return false end
+    local char = target.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    return hum.Health > 0
+end
+
+local deadPlayers = {}
+
 local function isEnemy(target)
-    if target == player then return false end
-    local my = getTeam(player)
-    local their = getTeam(target)
-    if my == "unknown" or their == "unknown" then return false end
-    if my == "警察" then return their == "囚犯" or their == "犯人" end
-    if my == "囚犯" or my == "犯人" then return their == "警察" end
+    if not target or target == player then return false end
+    if deadPlayers[target] and not isAlive(target) then return false end
+    if deadPlayers[target] and isAlive(target) then deadPlayers[target] = false end
+    if not isAlive(target) then
+        deadPlayers[target] = true
+        return false
+    end
+    
+    local myTeam = getPlayerTeamName(player)
+    local targetTeam = getPlayerTeamName(target)
+    
+    if myTeam == "未知" or targetTeam == "未知" then return false end
+    if myTeam == targetTeam then return false end
+    
+    -- 警察打犯人/罪犯
+    if myTeam == "警察" then
+        return targetTeam == "犯人" or targetTeam == "罪犯"
+    end
+    
+    -- 犯人打警察
+    if myTeam == "犯人" then
+        return targetTeam == "警察"
+    end
+    
+    -- 罪犯打警察，打犯人取决于开关
+    if myTeam == "罪犯" then
+        if targetTeam == "警察" then return true end
+        if targetTeam == "犯人" and settings.criminalAttackPrisoner then
+            return true
+        end
+        return false
+    end
+    
     return false
 end
 
+-- 玩家复活时重置音效标记
+local function resetSoundFlag(targetPlayer)
+    if targetPlayer ~= player then
+        playedSoundForPlayer[targetPlayer] = false
+    end
+end
+
+for _, p in pairs(Players:GetPlayers()) do
+    if p ~= player then
+        p.CharacterAdded:Connect(function()
+            resetSoundFlag(p)
+        end)
+    end
+end
+
+Players.PlayerAdded:Connect(function(p)
+    if p ~= player then
+        p.CharacterAdded:Connect(function()
+            resetSoundFlag(p)
+        end)
+    end
+end)
+
 -- ============================================================
---  🧱 墙壁检测
+--  墙壁检测
 -- ============================================================
 
 local function isVisible(targetPart)
-    if not wallOn then return true end
     local char = player.Character
     if not char or not targetPart then return false end
-    local origin = char:FindFirstChild("Head")
-    if not origin then return false end
+    local originPart = char:FindFirstChild("Head")
+    if not originPart then return false end
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {char}
+    params.FilterDescendantsInstances = {char, targetPart.Parent}
     params.IgnoreWater = true
-    local direction = targetPart.Position - origin.Position
-    local result = workspace:Raycast(origin.Position, direction, params)
+    local direction = targetPart.Position - originPart.Position
+    local result = workspace:Raycast(originPart.Position, direction, params)
     if result then
         return result.Instance:IsDescendantOf(targetPart.Parent)
     end
@@ -127,7 +202,38 @@ local function isVisible(targetPart)
 end
 
 -- ============================================================
---  🔫 检测是否拿枪
+--  索敌
+-- ============================================================
+
+local function getTarget()
+    local closest, closestDist = nil, math.huge
+    local char = player.Character
+    if not char then return nil end
+    local rootPart = char:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return nil end
+    local myPos = rootPart.Position
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if p == player then continue end
+        if not isEnemy(p) then continue end
+        local targetChar = p.Character
+        if not targetChar then continue end
+        local part = targetChar:FindFirstChild("Head")
+            or targetChar:FindFirstChild("HumanoidRootPart")
+            or targetChar:FindFirstChild("UpperTorso")
+        if not part then continue end
+        if settings.wallCheck and not isVisible(part) then continue end
+        local dist = (part.Position - myPos).Magnitude
+        if dist < closestDist and dist <= settings.range then
+            closest = p
+            closestDist = dist
+        end
+    end
+    return closest
+end
+
+-- ============================================================
+--  武器检测
 -- ============================================================
 
 local function hasWeapon()
@@ -140,209 +246,172 @@ local function hasWeapon()
 end
 
 -- ============================================================
---  🎯 获取目标
--- ============================================================
-
-local function getTarget()
-    local closest, closestDist = nil, math.huge
-    local cam = workspace.CurrentCamera
-    for _, p in pairs(game.Players:GetPlayers()) do
-        if isEnemy(p) then
-            local char = p.Character
-            if char then
-                local part = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
-                if part then
-                    if not isVisible(part) then continue end
-                    local dist = (part.Position - cam.CFrame.Position).Magnitude
-                    if dist < closestDist and dist <= range then
-                        closest = p
-                        closestDist = dist
-                    end
-                end
-            end
-        end
-    end
-    return closest
-end
-
--- ============================================================
---  🔴 红色弹道
+--  红色弹道
 -- ============================================================
 
 local function createRedTrail(origin, targetPos)
     if not hasWeapon() then return end
-    local dist = (origin - targetPos).Magnitude
-    if dist < 1 then return end
+    local distance = (origin - targetPos).Magnitude
+    if distance < 1 then return end
     local trail = Instance.new("Part")
-    trail.Size = Vector3.new(0.05, 0.05, dist)
-    trail.CFrame = CFrame.lookAt(origin, targetPos) * CFrame.new(0, 0, -dist / 2)
+    trail.Size = Vector3.new(0.05, 0.05, distance)
+    trail.CFrame = CFrame.lookAt(origin, targetPos) * CFrame.new(0, 0, -distance / 2)
     trail.BrickColor = BrickColor.new("Bright red")
     trail.Material = Enum.Material.Neon
     trail.Anchored = true
     trail.CanCollide = false
+    trail.CanQuery = false
+    trail.CanTouch = false
     trail.Transparency = 0.15
     trail.Parent = workspace
-    game:GetService("Debris"):AddItem(trail, 0.3)
+    local a0 = Instance.new("Attachment")
+    a0.Position = Vector3.new(0, 0, -distance / 2)
+    a0.Parent = trail
+    local a1 = Instance.new("Attachment")
+    a1.Position = Vector3.new(0, 0, distance / 2)
+    a1.Parent = trail
+    local beam = Instance.new("Beam")
+    beam.Attachment0 = a0
+    beam.Attachment1 = a1
+    beam.Width0 = 0.8
+    beam.Width1 = 0.8
+    beam.Color = ColorSequence.new(Color3.fromRGB(255, 0, 0))
+    beam.Transparency = NumberSequence.new(0.05)
+    beam.LightEmission = 1
+    beam.LightInfluence = 0
+    beam.Parent = trail
+    Debris:AddItem(trail, 0.3)
 end
 
 -- ============================================================
---  🔫 射击
+--  拳头
 -- ============================================================
 
-local function shoot()
+local function fistAttack(target)
+    if not target or not meleeEvent then return end
+    myTarget = target
+    pcall(function() meleeEvent:FireServer(target, 1, 1) end)
+    
+    task.wait(0.05)
+    local charTarget = target.Character
+    if charTarget then
+        local hum = charTarget:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health <= 0 and not playedSoundForPlayer[target] then
+            playedSoundForPlayer[target] = true
+            playSoundSafe(selectedSound)
+            deadPlayers[target] = true
+            print("拳头击杀: " .. target.Name)
+        end
+    end
+end
+
+-- ============================================================
+--  枪械射击 + 音效检测
+-- ============================================================
+
+local function gunShoot()
+    if not hasWeapon() then return end
     local target = getTarget()
     if not target or not ShootEvent then return end
+    
+    myTarget = target
+    
     local char = player.Character
     if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return end
     local head = char:FindFirstChild("Head")
     local origin = head and head.Position + root.CFrame.LookVector * 3.5 or root.Position + Vector3.new(0, 1.5, 0)
-    local targetPart = target.Character:FindFirstChild("Head") or target.Character:FindFirstChild("HumanoidRootPart")
+    local targetPart = target.Character:FindFirstChild("Head")
+        or target.Character:FindFirstChild("HumanoidRootPart")
+        or target.Character:FindFirstChild("UpperTorso")
     if not targetPart then return end
     local targetPos = targetPart.Position
     createRedTrail(origin, targetPos)
-    local args = {{origin, targetPos, targetPart}}
+    local args = { { { origin, targetPos, targetPart } } }
     pcall(function() ShootEvent:FireServer(unpack(args)) end)
-    -- 击杀音效
-    if target then
-        local now = tick()
-        if now - lastSound > 0.5 then
-            local charTarget = target.Character
-            local isDead = false
-            if not charTarget then
-                isDead = true
-            else
-                local hum = charTarget:FindFirstChildOfClass("Humanoid")
-                if not hum or hum.Health <= 0 then
-                    isDead = true
-                end
-            end
-            if isDead and not playedSound[target] then
-                playSound(selectedSound.ID)
-                lastSound = now
-                playedSound[target] = true
-                print("💀 击杀: " .. target.Name .. " 音效: " .. selectedSound.Name)
-            end
+
+    task.wait(0.03)
+    local charTarget = target.Character
+    if charTarget then
+        local hum = charTarget:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health <= 0 and not playedSoundForPlayer[target] then
+            playedSoundForPlayer[target] = true
+            playSoundSafe(selectedSound)
+            deadPlayers[target] = true
+            print("击杀: " .. target.Name .. " " .. killSounds[soundIndex].Name)
         end
     end
 end
 
 -- ============================================================
---  🥊 拳头
+--  Died事件备份
 -- ============================================================
 
-local function fistAttack()
-    local target = getTarget()
-    if not target or not meleeEvent then return end
-    pcall(function() meleeEvent:FireServer(target, 1, 1) end)
+local function setupDeathListener(targetPlayer)
+    if targetPlayer == player then return end
+    
+    targetPlayer.CharacterAdded:Connect(function(char)
+        local hum = char:WaitForChild("Humanoid")
+        hum.Died:Connect(function()
+            if targetPlayer == myTarget and isEnemy(targetPlayer) then
+                if not playedSoundForPlayer[targetPlayer] then
+                    playedSoundForPlayer[targetPlayer] = true
+                    playSoundSafe(selectedSound)
+                    deadPlayers[targetPlayer] = true
+                    print("Died事件击杀: " .. targetPlayer.Name)
+                end
+            end
+            myTarget = nil
+        end)
+    end)
 end
 
+for _, p in pairs(Players:GetPlayers()) do
+    setupDeathListener(p)
+end
+
+Players.PlayerAdded:Connect(function(p)
+    setupDeathListener(p)
+end)
+
 -- ============================================================
---  🔄 主循环
+--  主循环
 -- ============================================================
 
-runService.Heartbeat:Connect(function()
+local lastGun = 0
+local lastFist = 0
+
+RunService.Heartbeat:Connect(function()
     local now = tick()
     local target = getTarget()
-    if fistOn and target and meleeEvent then
-        if now - lastFist >= 0.00001 then
-            fistAttack()
+    if settings.fistEnabled and target and meleeEvent then
+        if now - lastFist >= settings.fistInterval then
+            fistAttack(target)
             lastFist = now
         end
     end
-    if gunOn and target and ShootEvent then
-        if now - lastGun >= 0.02 then
-            shoot()
+    if settings.gunEnabled and target and ShootEvent then
+        if now - lastGun >= settings.gunInterval then
+            gunShoot()
             lastGun = now
         end
     end
 end)
 
 -- ============================================================
---  🎨 透视头（三阵营）
--- ============================================================
-
-local teamColors = {
-    ["警察"] = Color3.fromRGB(0, 150, 255),
-    ["囚犯"] = Color3.fromRGB(255, 165, 0),
-    ["犯人"] = Color3.fromRGB(255, 0, 0),
-    ["unknown"] = Color3.fromRGB(128, 128, 128),
-}
-local tags = {}
-
-local function createESP(plr)
-    if tags[plr] then pcall(function() tags[plr]:Destroy() end); tags[plr] = nil end
-    if not espOn then return end
-    local char = plr.Character
-    if not char then return end
-    local head = char:FindFirstChild("Head")
-    if not head then return end
-    local team = getTeam(plr)
-    local color = teamColors[team] or Color3.fromRGB(128, 128, 128)
-    local gui = Instance.new("BillboardGui")
-    gui.Name = "TeamESP"
-    gui.Size = UDim2.new(0, 50, 0, 16)
-    gui.Adornee = head
-    gui.AlwaysOnTop = true
-    gui.StudsOffset = Vector3.new(0, 2.5, 0)
-    gui.MaxDistance = 150
-    gui.Parent = head
-    local bg = Instance.new("Frame")
-    bg.Size = UDim2.new(1, 0, 1, 0)
-    bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    bg.BackgroundTransparency = 0.35
-    bg.BorderSizePixel = 0
-    Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 3)
-    bg.Parent = gui
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = team
-    label.TextColor3 = color
-    label.TextSize = 10
-    label.Font = Enum.Font.Gotham
-    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    label.TextStrokeTransparency = 0.2
-    label.Parent = gui
-    tags[plr] = gui
-end
-
-local function updateESP()
-    for _, p in pairs(game.Players:GetPlayers()) do
-        if p ~= player then
-            if espOn then createESP(p) else if tags[p] then pcall(function() tags[p]:Destroy() end); tags[p] = nil end end
-        end
-    end
-end
-
-game.Players.PlayerAdded:Connect(updateESP)
-game.Players.PlayerRemoving:Connect(function(p) if tags[p] then pcall(function() tags[p]:Destroy() end); tags[p] = nil end end)
-player.CharacterAdded:Connect(updateESP)
-runService.Heartbeat:Connect(function()
-    if espOn then
-        for _, p in pairs(game.Players:GetPlayers()) do
-            if p ~= player and not tags[p] then createESP(p) end
-        end
-    end
-end)
-
--- ============================================================
---  🌈 彩虹美化
+--  彩虹美化
 -- ============================================================
 
 local rainbowColors = {
-    Color3.fromRGB(255, 0, 0), Color3.fromRGB(255, 165, 0), Color3.fromRGB(255, 255, 0),
-    Color3.fromRGB(0, 255, 0), Color3.fromRGB(0, 255, 255), Color3.fromRGB(0, 0, 255),
-    Color3.fromRGB(255, 0, 255), Color3.fromRGB(255, 20, 147),
+    Color3.fromRGB(255,0,0), Color3.fromRGB(255,165,0), Color3.fromRGB(255,255,0),
+    Color3.fromRGB(0,255,0), Color3.fromRGB(0,255,255), Color3.fromRGB(0,0,255),
+    Color3.fromRGB(255,0,255), Color3.fromRGB(255,20,147),
 }
-local originalColors = {}
-local originalMaterials = {}
-local originalTransparency = {}
+local originalColors, originalMaterials, originalTransparency = {}, {}, {}
 
 local function getWeaponParts()
-    local parts = {}
-    local char = player.Character
+    local parts, char = {}, player.Character
     if not char then return parts end
     for _, tool in pairs(char:GetChildren()) do
         if tool:IsA("Tool") then
@@ -357,7 +426,7 @@ local function getWeaponParts()
 end
 
 local function applyRainbow()
-    if not rainbowOn then return end
+    if not settings.rainbowEnabled then return end
     local parts = getWeaponParts()
     if #parts == 0 then return end
     for _, part in pairs(parts) do
@@ -366,9 +435,8 @@ local function applyRainbow()
             originalMaterials[part] = part.Material
             originalTransparency[part] = part.Transparency
         end
-        local color = rainbowColors[math.random(1, #rainbowColors)]
         pcall(function()
-            part.Color = color
+            part.Color = rainbowColors[math.random(1, #rainbowColors)]
             part.Material = Enum.Material.Neon
             part.Transparency = 0.3
         end)
@@ -383,305 +451,471 @@ local function restoreWeaponColors()
             part.Transparency = originalTransparency[part] or 0
         end)
     end
-    table.clear(originalColors)
-    table.clear(originalMaterials)
-    table.clear(originalTransparency)
+    table.clear(originalColors); table.clear(originalMaterials); table.clear(originalTransparency)
 end
 
-runService.Heartbeat:Connect(function()
-    applyRainbow()
+local rainbowCounter = 0
+RunService.Heartbeat:Connect(function(dt)
+    rainbowCounter = rainbowCounter + dt
+    if rainbowCounter >= 0.1 then rainbowCounter = 0; applyRainbow() end
 end)
 
 -- ============================================================
---  🎨 UI
+--  武器切换检测
 -- ============================================================
 
-local f = sg:FindFirstChild("MainFrame")
-if not f then
-    f = Instance.new("Frame")
-    f.Name = "MainFrame"
-    f.Size = UDim2.new(0, 180, 0, 230)
-    f.Position = UDim2.new(0.02, 0, 0.15, 0)
-    f.BackgroundColor3 = Color3.fromRGB(15, 15, 30)
-    f.BackgroundTransparency = 0.1
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 10)
-    f.Parent = sg
+local currentWeapon = nil
+local function checkWeapon()
+    local char = player.Character
+    if not char then return end
+    local tool = nil
+    for _, v in pairs(char:GetChildren()) do
+        if v:IsA("Tool") then
+            tool = v
+            break
+        end
+    end
+    if tool and tool ~= currentWeapon then
+        currentWeapon = tool
+    end
+    if not tool then currentWeapon = nil end
 end
 
-local title = f:FindFirstChild("Title")
-if not title then
-    title = Instance.new("TextLabel")
-    title.Name = "Title"
-    title.Size = UDim2.new(1, 0, 0, 28)
-    title.BackgroundTransparency = 1
-    title.Text = "⚔️ 战斗"
-    title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.TextSize = 14
-    title.Font = Enum.Font.GothamBold
-    title.Parent = f
+RunService.Heartbeat:Connect(checkWeapon)
+
+player.CharacterAdded:Connect(function()
+    currentWeapon = nil
+    for p in pairs(deadPlayers) do
+        if p ~= player then deadPlayers[p] = false end
+    end
+    task.wait(0.3)
+    checkWeapon()
+end)
+
+-- ============================================================
+--  透视（打死后保持原颜色）
+-- ============================================================
+
+local espFolder = Instance.new("Folder")
+espFolder.Name = "ESP_Folder"
+espFolder.Parent = PlayerGui
+
+local function updateESPVisibility()
+    for _, child in pairs(espFolder:GetChildren()) do
+        child.Enabled = settings.espEnabled
+    end
 end
 
-local function createSwitch(y, icon, name, default, callback)
-    local bg = Instance.new("Frame")
-    bg.Size = UDim2.new(0, 150, 0, 28)
-    bg.Position = UDim2.new(0.5, -75, 0, y)
-    bg.BackgroundColor3 = default and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
-    bg.BackgroundTransparency = 0.2
-    Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 6)
-    bg.Parent = f
+local function deleteESP(playerObj)
+    local esp = espFolder:FindFirstChild(playerObj.Name)
+    if esp then esp:Destroy() end
+end
+
+local function createESP(playerObj)
+    if playerObj == player then return end
+    local old = espFolder:FindFirstChild(playerObj.Name)
+    if old then old:Destroy() end
+    local char = playerObj.Character
+    if not char then return end
+    local head = char:FindFirstChild("Head")
+    if not head then return end
     
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0, 70, 0, 26)
-    label.Position = UDim2.new(0, 6, 0.5, -13)
-    label.BackgroundTransparency = 1
-    label.Text = icon .. " " .. name
-    label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    label.TextSize = 12
-    label.Font = Enum.Font.GothamBold
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = bg
+    local textColor = getPlayerTeamColor(playerObj)
     
-    local status = Instance.new("TextLabel")
-    status.Size = UDim2.new(0, 16, 0, 16)
-    status.Position = UDim2.new(0, 85, 0.5, -8)
-    status.BackgroundTransparency = 1
-    status.Text = default and "✅" or "❌"
-    status.TextColor3 = default and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
-    status.TextSize = 12
-    status.Parent = bg
-    
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 40, 0, 22)
-    btn.Position = UDim2.new(1, -44, 0.5, -11)
-    btn.BackgroundTransparency = 1
-    btn.Text = default and "关" or "开"
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.TextSize = 11
-    btn.Font = Enum.Font.GothamBold
-    btn.Parent = bg
-    
-    btn.MouseButton1Click:Connect(function()
-        local state = not default
-        default = state
-        btn.Text = state and "关" or "开"
-        bg.BackgroundColor3 = state and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
-        status.Text = state and "✅" or "❌"
-        status.TextColor3 = state and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
-        callback(state)
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = playerObj.Name
+    billboard.Size = UDim2.new(0,200,0,40)
+    billboard.Adornee = head
+    billboard.AlwaysOnTop = true
+    billboard.MaxDistance = 9999
+    billboard.StudsOffset = Vector3.new(0,2.5,0)
+    billboard.Enabled = settings.espEnabled
+    billboard.Parent = espFolder
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Size = UDim2.new(1,0,0.5,0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = playerObj.Name .. " (" .. getPlayerTeamName(playerObj) .. ")"
+    nameLabel.TextColor3 = textColor
+    nameLabel.TextSize = 14
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextStrokeTransparency = 0.5
+    nameLabel.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+    nameLabel.Parent = billboard
+    local infoLabel = Instance.new("TextLabel")
+    infoLabel.Size = UDim2.new(1,0,0.5,0)
+    infoLabel.Position = UDim2.new(0,0,0.5,0)
+    infoLabel.BackgroundTransparency = 1
+    infoLabel.Text = "生命: 100"
+    infoLabel.TextColor3 = Color3.fromRGB(255,255,255)
+    infoLabel.TextSize = 11
+    infoLabel.Font = Enum.Font.Gotham
+    infoLabel.TextStrokeTransparency = 0.5
+    infoLabel.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+    infoLabel.Parent = billboard
+    task.spawn(function()
+        while billboard and billboard.Parent do
+            task.wait(0.2)
+            local char2 = playerObj.Character
+            if not char2 then 
+                billboard.Enabled = false 
+                continue 
+            end
+            billboard.Enabled = settings.espEnabled
+            local hum = char2:FindFirstChildOfClass("Humanoid")
+            if hum then
+                local health = math.round(hum.Health)
+                infoLabel.Text = "生命: " .. health
+            end
+            local newColor = getPlayerTeamColor(playerObj)
+            if nameLabel.TextColor3 ~= newColor then
+                nameLabel.TextColor3 = newColor
+            end
+        end
     end)
-    
-    return bg
 end
 
--- 拳头
-local fistY = 36
-local fistBg = Instance.new("Frame")
-fistBg.Size = UDim2.new(0, 150, 0, 28)
-fistBg.Position = UDim2.new(0.5, -75, 0, fistY)
-fistBg.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-fistBg.BackgroundTransparency = 0.2
-Instance.new("UICorner", fistBg).CornerRadius = UDim.new(0, 6)
-fistBg.Parent = f
+local function setupPlayerESP(playerObj)
+    if playerObj == player then return end
+    playerObj.CharacterAdded:Connect(function()
+        task.wait(0.3)
+        createESP(playerObj)
+    end)
+    if playerObj.Character then
+        task.wait(0.3)
+        createESP(playerObj)
+    end
+end
 
-local fistLabel = Instance.new("TextLabel")
-fistLabel.Size = UDim2.new(0, 70, 0, 26)
-fistLabel.Position = UDim2.new(0, 6, 0.5, -13)
-fistLabel.BackgroundTransparency = 1
-fistLabel.Text = "🥊 拳头"
-fistLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-fistLabel.TextSize = 12
-fistLabel.Font = Enum.Font.GothamBold
-fistLabel.TextXAlignment = Enum.TextXAlignment.Left
-fistLabel.Parent = fistBg
+for _, p in pairs(Players:GetPlayers()) do
+    setupPlayerESP(p)
+end
 
-local fistStatus = Instance.new("TextLabel")
-fistStatus.Size = UDim2.new(0, 16, 0, 16)
-fistStatus.Position = UDim2.new(0, 85, 0.5, -8)
-fistStatus.BackgroundTransparency = 1
-fistStatus.Text = "❌"
-fistStatus.TextColor3 = Color3.fromRGB(255, 80, 80)
-fistStatus.TextSize = 12
-fistStatus.Parent = fistBg
-
-local fistBtn = Instance.new("TextButton")
-fistBtn.Size = UDim2.new(0, 40, 0, 22)
-fistBtn.Position = UDim2.new(1, -44, 0.5, -11)
-fistBtn.BackgroundTransparency = 1
-fistBtn.Text = "开"
-fistBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-fistBtn.TextSize = 11
-fistBtn.Font = Enum.Font.GothamBold
-fistBtn.Parent = fistBg
-
-fistBtn.MouseButton1Click:Connect(function()
-    fistOn = not fistOn
-    fistBtn.Text = fistOn and "关" or "开"
-    fistBg.BackgroundColor3 = fistOn and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
-    fistStatus.Text = fistOn and "✅" or "❌"
-    fistStatus.TextColor3 = fistOn and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
+Players.PlayerAdded:Connect(function(p)
+    setupPlayerESP(p)
 end)
 
--- 枪械
-local gunY = 72
-local gunBg = Instance.new("Frame")
-gunBg.Size = UDim2.new(0, 150, 0, 28)
-gunBg.Position = UDim2.new(0.5, -75, 0, gunY)
-gunBg.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-gunBg.BackgroundTransparency = 0.2
-Instance.new("UICorner", gunBg).CornerRadius = UDim.new(0, 6)
-gunBg.Parent = f
-
-local gunLabel = Instance.new("TextLabel")
-gunLabel.Size = UDim2.new(0, 70, 0, 26)
-gunLabel.Position = UDim2.new(0, 6, 0.5, -13)
-gunLabel.BackgroundTransparency = 1
-gunLabel.Text = "🔫 枪械"
-gunLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-gunLabel.TextSize = 12
-gunLabel.Font = Enum.Font.GothamBold
-gunLabel.TextXAlignment = Enum.TextXAlignment.Left
-gunLabel.Parent = gunBg
-
-local gunStatus = Instance.new("TextLabel")
-gunStatus.Size = UDim2.new(0, 16, 0, 16)
-gunStatus.Position = UDim2.new(0, 85, 0.5, -8)
-gunStatus.BackgroundTransparency = 1
-gunStatus.Text = "❌"
-gunStatus.TextColor3 = Color3.fromRGB(255, 80, 80)
-gunStatus.TextSize = 12
-gunStatus.Parent = gunBg
-
-local gunBtn = Instance.new("TextButton")
-gunBtn.Size = UDim2.new(0, 40, 0, 22)
-gunBtn.Position = UDim2.new(1, -44, 0.5, -11)
-gunBtn.BackgroundTransparency = 1
-gunBtn.Text = "开"
-gunBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-gunBtn.TextSize = 11
-gunBtn.Font = Enum.Font.GothamBold
-gunBtn.Parent = gunBg
-
-gunBtn.MouseButton1Click:Connect(function()
-    gunOn = not gunOn
-    gunBtn.Text = gunOn and "关" or "开"
-    gunBg.BackgroundColor3 = gunOn and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
-    gunStatus.Text = gunOn and "✅" or "❌"
-    gunStatus.TextColor3 = gunOn and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
+Players.PlayerRemoving:Connect(function(p)
+    deleteESP(p)
 end)
 
--- 透视
-local espY = 108
-local espBg = Instance.new("Frame")
-espBg.Size = UDim2.new(0, 150, 0, 28)
-espBg.Position = UDim2.new(0.5, -75, 0, espY)
-espBg.BackgroundColor3 = Color3.fromRGB(60, 200, 80)
-espBg.BackgroundTransparency = 0.2
-Instance.new("UICorner", espBg).CornerRadius = UDim.new(0, 6)
-espBg.Parent = f
-
-local espLabel = Instance.new("TextLabel")
-espLabel.Size = UDim2.new(0, 70, 0, 26)
-espLabel.Position = UDim2.new(0, 6, 0.5, -13)
-espLabel.BackgroundTransparency = 1
-espLabel.Text = "👁️ 透视"
-espLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-espLabel.TextSize = 12
-espLabel.Font = Enum.Font.GothamBold
-espLabel.TextXAlignment = Enum.TextXAlignment.Left
-espLabel.Parent = espBg
-
-local espStatus = Instance.new("TextLabel")
-espStatus.Size = UDim2.new(0, 16, 0, 16)
-espStatus.Position = UDim2.new(0, 85, 0.5, -8)
-espStatus.BackgroundTransparency = 1
-espStatus.Text = "✅"
-espStatus.TextColor3 = Color3.fromRGB(100, 255, 100)
-espStatus.TextSize = 12
-espStatus.Parent = espBg
-
-local espBtn = Instance.new("TextButton")
-espBtn.Size = UDim2.new(0, 40, 0, 22)
-espBtn.Position = UDim2.new(1, -44, 0.5, -11)
-espBtn.BackgroundTransparency = 1
-espBtn.Text = "关"
-espBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-espBtn.TextSize = 11
-espBtn.Font = Enum.Font.GothamBold
-espBtn.Parent = espBg
-
-espBtn.MouseButton1Click:Connect(function()
-    espOn = not espOn
-    espBtn.Text = espOn and "关" or "开"
-    espBg.BackgroundColor3 = espOn and Color3.fromRGB(60, 200, 80) or Color3.fromRGB(200, 50, 50)
-    espStatus.Text = espOn and "✅" or "❌"
-    espStatus.TextColor3 = espOn and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 80, 80)
-    updateESP()
+task.spawn(function()
+    while task.wait(5) do
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= player then
+                local esp = espFolder:FindFirstChild(p.Name)
+                if not esp and p.Character and isAlive(p) then
+                    createESP(p)
+                end
+            end
+        end
+    end
 end)
 
--- 音效切换按钮
-local soundY = 144
-local soundBg = Instance.new("Frame")
-soundBg.Size = UDim2.new(0, 150, 0, 28)
-soundBg.Position = UDim2.new(0.5, -75, 0, soundY)
-soundBg.BackgroundColor3 = Color3.fromRGB(60, 200, 80)
-soundBg.BackgroundTransparency = 0.2
-Instance.new("UICorner", soundBg).CornerRadius = UDim.new(0, 6)
-soundBg.Parent = f
+-- ============================================================
+--  UI
+-- ============================================================
 
-local soundLabel = Instance.new("TextLabel")
-soundLabel.Size = UDim2.new(0, 80, 0, 26)
-soundLabel.Position = UDim2.new(0, 6, 0.5, -13)
-soundLabel.BackgroundTransparency = 1
-soundLabel.Text = "🔊 " .. soundList[soundIndex].Name
-soundLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-soundLabel.TextSize = 11
-soundLabel.Font = Enum.Font.GothamBold
-soundLabel.TextXAlignment = Enum.TextXAlignment.Left
-soundLabel.Parent = soundBg
+local sg = Instance.new("ScreenGui")
+sg.Name = "PrisonLife"
+sg.ResetOnSpawn = false
+sg.Parent = PlayerGui
 
-local soundBtn = Instance.new("TextButton")
-soundBtn.Size = UDim2.new(0, 40, 0, 22)
-soundBtn.Position = UDim2.new(1, -44, 0.5, -11)
-soundBtn.BackgroundTransparency = 1
-soundBtn.Text = "切换"
-soundBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-soundBtn.TextSize = 11
-soundBtn.Font = Enum.Font.GothamBold
-soundBtn.Parent = soundBg
+local f = Instance.new("Frame")
+f.Size = UDim2.new(0, 200, 0, 270)
+f.Position = UDim2.new(0.03, 0, 0.1, 0)
+f.BackgroundColor3 = Color3.fromRGB(15,15,30)
+f.BackgroundTransparency = 0.15
+f.BorderSizePixel = 0
+Instance.new("UICorner", f).CornerRadius = UDim.new(0,12)
+f.Parent = sg
 
-soundBtn.MouseButton1Click:Connect(function()
-    soundIndex = soundIndex % #soundList + 1
-    selectedSound = soundList[soundIndex]
-    soundLabel.Text = "🔊 " .. selectedSound.Name
-    print("🔊 音效切换: " .. selectedSound.Name)
-    -- 试听一下
-    playSound(selectedSound.ID)
-end)
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1,0,0,30)
+title.BackgroundTransparency = 1
+title.Text = "监狱人生"
+title.TextColor3 = Color3.fromRGB(255,50,50)
+title.TextSize = 16
+title.Font = Enum.Font.GothamBold
+title.Parent = f
 
--- 范围显示
-local rangeLabel = Instance.new("TextLabel")
-rangeLabel.Size = UDim2.new(1, 0, 0, 16)
-rangeLabel.Position = UDim2.new(0, 0, 0, 182)
-rangeLabel.BackgroundTransparency = 1
-rangeLabel.Text = "📏 范围: 70"
-rangeLabel.TextColor3 = Color3.fromRGB(150, 150, 200)
-rangeLabel.TextSize = 10
-rangeLabel.Font = Enum.Font.Gotham
-rangeLabel.Parent = f
+local line = Instance.new("Frame")
+line.Size = UDim2.new(0.9,0,0,1)
+line.Position = UDim2.new(0.05,0,0,32)
+line.BackgroundColor3 = Color3.fromRGB(255,50,50)
+line.BackgroundTransparency = 0.5
+line.Parent = f
 
--- 阵营显示
+local teamName = getPlayerTeamName(player)
+local teamColor = getPlayerTeamColor(player)
 local teamLabel = Instance.new("TextLabel")
-teamLabel.Size = UDim2.new(1, 0, 0, 16)
-teamLabel.Position = UDim2.new(0, 0, 0, 198)
+teamLabel.Size = UDim2.new(1,-20,0,22)
+teamLabel.Position = UDim2.new(0,10,0,38)
 teamLabel.BackgroundTransparency = 1
-teamLabel.Text = "👤 阵营: " .. getTeam(player)
-teamLabel.TextColor3 = Color3.fromRGB(150, 150, 200)
-teamLabel.TextSize = 10
-teamLabel.Font = Enum.Font.Gotham
+teamLabel.Text = "阵营: " .. teamName
+teamLabel.TextColor3 = teamColor
+teamLabel.TextSize = 12
+teamLabel.Font = Enum.Font.GothamBold
+teamLabel.TextXAlignment = Enum.TextXAlignment.Left
 teamLabel.Parent = f
 
+-- 拳头
+local fistStatus = Instance.new("TextLabel")
+fistStatus.Size = UDim2.new(0, 60, 0, 24)
+fistStatus.Position = UDim2.new(0,10,0,66)
+fistStatus.BackgroundTransparency = 1
+fistStatus.Text = "拳头 关"
+fistStatus.TextColor3 = Color3.fromRGB(255,80,80)
+fistStatus.TextSize = 13
+fistStatus.Font = Enum.Font.GothamBold
+fistStatus.TextXAlignment = Enum.TextXAlignment.Left
+fistStatus.Parent = f
+local fistBtn = Instance.new("TextButton")
+fistBtn.Size = UDim2.new(0, 50, 0, 24)
+fistBtn.Position = UDim2.new(1,-58,0,64)
+fistBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+fistBtn.BackgroundTransparency = 0.2
+fistBtn.Text = "开"
+fistBtn.TextColor3 = Color3.fromRGB(255,255,255)
+fistBtn.TextSize = 13
+fistBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", fistBtn).CornerRadius = UDim.new(0,6)
+fistBtn.Parent = f
+
+-- 枪械
+local gunStatus = Instance.new("TextLabel")
+gunStatus.Size = UDim2.new(0, 60, 0, 24)
+gunStatus.Position = UDim2.new(0,10,0,96)
+gunStatus.BackgroundTransparency = 1
+gunStatus.Text = "枪械 关"
+gunStatus.TextColor3 = Color3.fromRGB(255,80,80)
+gunStatus.TextSize = 13
+gunStatus.Font = Enum.Font.GothamBold
+gunStatus.TextXAlignment = Enum.TextXAlignment.Left
+gunStatus.Parent = f
+local gunBtn = Instance.new("TextButton")
+gunBtn.Size = UDim2.new(0, 50, 0, 24)
+gunBtn.Position = UDim2.new(1,-58,0,94)
+gunBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+gunBtn.BackgroundTransparency = 0.2
+gunBtn.Text = "开"
+gunBtn.TextColor3 = Color3.fromRGB(255,255,255)
+gunBtn.TextSize = 13
+gunBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", gunBtn).CornerRadius = UDim.new(0,6)
+gunBtn.Parent = f
+
+-- 美化
+local rainbowStatus = Instance.new("TextLabel")
+rainbowStatus.Size = UDim2.new(0, 60, 0, 24)
+rainbowStatus.Position = UDim2.new(0,10,0,126)
+rainbowStatus.BackgroundTransparency = 1
+rainbowStatus.Text = "美化 开"
+rainbowStatus.TextColor3 = Color3.fromRGB(100,255,100)
+rainbowStatus.TextSize = 13
+rainbowStatus.Font = Enum.Font.GothamBold
+rainbowStatus.TextXAlignment = Enum.TextXAlignment.Left
+rainbowStatus.Parent = f
+local rainbowBtn = Instance.new("TextButton")
+rainbowBtn.Size = UDim2.new(0, 50, 0, 24)
+rainbowBtn.Position = UDim2.new(1,-58,0,124)
+rainbowBtn.BackgroundColor3 = Color3.fromRGB(60,200,80)
+rainbowBtn.BackgroundTransparency = 0.2
+rainbowBtn.Text = "关"
+rainbowBtn.TextColor3 = Color3.fromRGB(255,255,255)
+rainbowBtn.TextSize = 13
+rainbowBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", rainbowBtn).CornerRadius = UDim.new(0,6)
+rainbowBtn.Parent = f
+
+-- 音效
+local soundStatus = Instance.new("TextLabel")
+soundStatus.Size = UDim2.new(0, 60, 0, 24)
+soundStatus.Position = UDim2.new(0,10,0,156)
+soundStatus.BackgroundTransparency = 1
+soundStatus.Text = "音效 开"
+soundStatus.TextColor3 = Color3.fromRGB(100,255,100)
+soundStatus.TextSize = 13
+soundStatus.Font = Enum.Font.GothamBold
+soundStatus.TextXAlignment = Enum.TextXAlignment.Left
+soundStatus.Parent = f
+local soundBtn = Instance.new("TextButton")
+soundBtn.Size = UDim2.new(0, 50, 0, 24)
+soundBtn.Position = UDim2.new(1,-58,0,154)
+soundBtn.BackgroundColor3 = Color3.fromRGB(60,200,80)
+soundBtn.BackgroundTransparency = 0.2
+soundBtn.Text = "关"
+soundBtn.TextColor3 = Color3.fromRGB(255,255,255)
+soundBtn.TextSize = 13
+soundBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", soundBtn).CornerRadius = UDim.new(0,6)
+soundBtn.Parent = f
+
+-- 透视
+local espStatus = Instance.new("TextLabel")
+espStatus.Size = UDim2.new(0, 60, 0, 24)
+espStatus.Position = UDim2.new(0,10,0,186)
+espStatus.BackgroundTransparency = 1
+espStatus.Text = "透视 开"
+espStatus.TextColor3 = Color3.fromRGB(100,255,100)
+espStatus.TextSize = 13
+espStatus.Font = Enum.Font.GothamBold
+espStatus.TextXAlignment = Enum.TextXAlignment.Left
+espStatus.Parent = f
+local espBtn = Instance.new("TextButton")
+espBtn.Size = UDim2.new(0, 50, 0, 24)
+espBtn.Position = UDim2.new(1,-58,0,184)
+espBtn.BackgroundColor3 = Color3.fromRGB(60,200,80)
+espBtn.BackgroundTransparency = 0.2
+espBtn.Text = "关"
+espBtn.TextColor3 = Color3.fromRGB(255,255,255)
+espBtn.TextSize = 13
+espBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", espBtn).CornerRadius = UDim.new(0,6)
+espBtn.Parent = f
+
+-- 罪犯打犯人开关
+local criminalStatus = Instance.new("TextLabel")
+criminalStatus.Size = UDim2.new(0, 100, 0, 24)
+criminalStatus.Position = UDim2.new(0,10,0,216)
+criminalStatus.BackgroundTransparency = 1
+criminalStatus.Text = "罪犯打犯人 关"
+criminalStatus.TextColor3 = Color3.fromRGB(255,80,80)
+criminalStatus.TextSize = 13
+criminalStatus.Font = Enum.Font.GothamBold
+criminalStatus.TextXAlignment = Enum.TextXAlignment.Left
+criminalStatus.Parent = f
+
+local criminalBtn = Instance.new("TextButton")
+criminalBtn.Size = UDim2.new(0, 50, 0, 24)
+criminalBtn.Position = UDim2.new(1,-58,0,214)
+criminalBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+criminalBtn.BackgroundTransparency = 0.2
+criminalBtn.Text = "开"
+criminalBtn.TextColor3 = Color3.fromRGB(255,255,255)
+criminalBtn.TextSize = 13
+criminalBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", criminalBtn).CornerRadius = UDim.new(0,6)
+criminalBtn.Parent = f
+
+criminalBtn.MouseButton1Click:Connect(function()
+    settings.criminalAttackPrisoner = not settings.criminalAttackPrisoner
+    if settings.criminalAttackPrisoner then
+        criminalBtn.Text = "关"
+        criminalBtn.BackgroundColor3 = Color3.fromRGB(60,200,80)
+        criminalStatus.Text = "罪犯打犯人 开"
+        criminalStatus.TextColor3 = Color3.fromRGB(100,255,100)
+    else
+        criminalBtn.Text = "开"
+        criminalBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+        criminalStatus.Text = "罪犯打犯人 关"
+        criminalStatus.TextColor3 = Color3.fromRGB(255,80,80)
+    end
+end)
+
+-- 音效切换
+local soundChangeBtn = Instance.new("TextButton")
+soundChangeBtn.Size = UDim2.new(0, 80, 0, 22)
+soundChangeBtn.Position = UDim2.new(0.5, -40, 0, 246)
+soundChangeBtn.BackgroundColor3 = Color3.fromRGB(50,50,100)
+soundChangeBtn.BackgroundTransparency = 0.2
+soundChangeBtn.Text = killSounds[1].Name
+soundChangeBtn.TextColor3 = Color3.fromRGB(255,255,255)
+soundChangeBtn.TextSize = 11
+soundChangeBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", soundChangeBtn).CornerRadius = UDim.new(0,6)
+soundChangeBtn.Parent = f
+
+soundChangeBtn.MouseButton1Click:Connect(function()
+    soundIndex = soundIndex % #killSounds + 1
+    selectedSound = killSounds[soundIndex].ID
+    soundChangeBtn.Text = killSounds[soundIndex].Name
+    playSoundSafe(selectedSound)
+    print("音效切换为: " .. killSounds[soundIndex].Name)
+end)
+
 -- ============================================================
---  🖱️ 拖动
+--  按钮事件
+-- ============================================================
+
+fistBtn.MouseButton1Click:Connect(function()
+    settings.fistEnabled = not settings.fistEnabled
+    if settings.fistEnabled then
+        fistBtn.Text = "关"
+        fistBtn.BackgroundColor3 = Color3.fromRGB(60,200,80)
+        fistStatus.Text = "拳头 开"
+        fistStatus.TextColor3 = Color3.fromRGB(100,255,100)
+    else
+        fistBtn.Text = "开"
+        fistBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+        fistStatus.Text = "拳头 关"
+        fistStatus.TextColor3 = Color3.fromRGB(255,80,80)
+    end
+end)
+
+gunBtn.MouseButton1Click:Connect(function()
+    settings.gunEnabled = not settings.gunEnabled
+    if settings.gunEnabled then
+        gunBtn.Text = "关"
+        gunBtn.BackgroundColor3 = Color3.fromRGB(60,200,80)
+        gunStatus.Text = "枪械 开"
+        gunStatus.TextColor3 = Color3.fromRGB(100,255,100)
+    else
+        gunBtn.Text = "开"
+        gunBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+        gunStatus.Text = "枪械 关"
+        gunStatus.TextColor3 = Color3.fromRGB(255,80,80)
+    end
+end)
+
+rainbowBtn.MouseButton1Click:Connect(function()
+    settings.rainbowEnabled = not settings.rainbowEnabled
+    if settings.rainbowEnabled then
+        rainbowBtn.Text = "关"
+        rainbowBtn.BackgroundColor3 = Color3.fromRGB(60,200,80)
+        rainbowStatus.Text = "美化 开"
+        rainbowStatus.TextColor3 = Color3.fromRGB(100,255,100)
+    else
+        rainbowBtn.Text = "开"
+        rainbowBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+        rainbowStatus.Text = "美化 关"
+        rainbowStatus.TextColor3 = Color3.fromRGB(255,80,80)
+        restoreWeaponColors()
+    end
+end)
+
+soundBtn.MouseButton1Click:Connect(function()
+    settings.soundEnabled = not settings.soundEnabled
+    if settings.soundEnabled then
+        soundBtn.Text = "关"
+        soundBtn.BackgroundColor3 = Color3.fromRGB(60,200,80)
+        soundStatus.Text = "音效 开"
+        soundStatus.TextColor3 = Color3.fromRGB(100,255,100)
+    else
+        soundBtn.Text = "开"
+        soundBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+        soundStatus.Text = "音效 关"
+        soundStatus.TextColor3 = Color3.fromRGB(255,80,80)
+    end
+end)
+
+espBtn.MouseButton1Click:Connect(function()
+    settings.espEnabled = not settings.espEnabled
+    if settings.espEnabled then
+        espBtn.Text = "关"
+        espBtn.BackgroundColor3 = Color3.fromRGB(60,200,80)
+        espStatus.Text = "透视 开"
+        espStatus.TextColor3 = Color3.fromRGB(100,255,100)
+    else
+        espBtn.Text = "开"
+        espBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+        espStatus.Text = "透视 关"
+        espStatus.TextColor3 = Color3.fromRGB(255,80,80)
+    end
+    updateESPVisibility()
+end)
+
+-- ============================================================
+--  拖动
 -- ============================================================
 
 local drag = false
@@ -696,7 +930,7 @@ title.InputBegan:Connect(function(input)
     end
 end)
 
-uis.InputChanged:Connect(function(input)
+UserInputService.InputChanged:Connect(function(input)
     if drag and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         f.Position = UDim2.new(
             startPos.X.Scale,
@@ -707,17 +941,18 @@ uis.InputChanged:Connect(function(input)
     end
 end)
 
-uis.InputEnded:Connect(function(input)
+UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         drag = false
     end
 end)
 
-task.wait(0.5)
-updateESP()
-
 print("========================================")
-print("✅ 全功能版已加载！")
-print("🥊 拳头 | 🔫 枪械 | 👁️ 透视 | 🔊 音效切换")
-print("📌 点击音效切换按钮选择不同音效")
+print("监狱人生已加载！")
+print("阵营: " .. teamName)
+print("警察=蓝色 | 犯人=黄色 | 罪犯=红色")
+print("打死后保持原颜色")
+print("不打尸体 | 墙壁检测 | 只播自己击杀")
+print("罪犯打犯人: " .. (settings.criminalAttackPrisoner and "开" or "关"))
+print("拳头 | 枪械 | 透视 | 音效 | 美化")
 print("========================================")
