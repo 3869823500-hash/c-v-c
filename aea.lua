@@ -1,9 +1,9 @@
 -- ============================================================
---  监狱人生 - 最终版（加指定击杀）
+--  监狱人生 - 最终版（加瞬间换弹MOD）
 --  警察：罪犯直接打，犯人有武器才打（排除食物）
 --  犯人：打警察 + 开关控制打罪犯
 --  罪犯：打警察 + 开关控制打犯人
---  功能：自动枪械 | 自动拳头 | 传送(自动查找) | 彩虹边框 | 音效(13种) | 击杀通知 | ESP透视 | 自动换弹 | 红色弹道 | 护盾跳过 | 指定击杀
+--  功能：自动枪械 | 自动拳头 | 传送(自动查找) | 彩虹边框 | 音效(13种) | 击杀通知 | ESP透视 | 自动换弹 | 红色弹道 | 护盾跳过 | 指定击杀 | 瞬间换弹
 --  音效逻辑：先音效→延迟0.3秒→通知 | 只有自己杀的才触发
 --  按 RightShift 打开菜单
 -- ============================================================
@@ -122,6 +122,45 @@ task.spawn(function()
         end
     end
 end)
+
+-- ============================================================
+--  ⭐ 瞬间换弹MOD（通过getgc查找武器数据表，只改ReloadTime）
+--  只改换弹时间，不改弹药、不改伤害
+-- ============================================================
+
+local moddedWeapons = {}
+
+local function ModifyWeapon(weaponTable)
+    if moddedWeapons[weaponTable] then return end
+    moddedWeapons[weaponTable] = true
+    if rawget(weaponTable, "ReloadTime") ~= nil then
+        rawset(weaponTable, "ReloadTime", 0)
+    end
+end
+
+local function FindAndModifyWeapons()
+    local gc = getgc(true)
+    if not gc then return end
+    for _, v in pairs(gc) do
+        if type(v) == "table" and rawget(v, "ReloadTime") then
+            ModifyWeapon(v)
+        end
+    end
+end
+
+task.spawn(function()
+    while true do
+        FindAndModifyWeapons()
+        task.wait(0.5)
+    end
+end)
+
+player.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    FindAndModifyWeapons()
+end)
+
+print("瞬间换弹已启用（只改换弹动作，不改弹药、不改伤害）")
 
 -- ============================================================
 --  音效（13种 原神V4）
@@ -1286,11 +1325,12 @@ end)
 Library:OnUnload(function() print("已卸载") end)
 
 print("========================================")
-print("监狱人生 最终版已加载")
+print("监狱人生 最终版已加载（加瞬间换弹MOD）")
 print("警察：罪犯直接打，犯人有武器才打（排除食物）")
 print("犯人：打警察 + 开关控制打罪犯")
 print("罪犯：打警察 + 开关控制打犯人")
 print("指定击杀：只打你选择的玩家")
+print("瞬间换弹：通过内存修改，无需换弹动作，不改弹药、不改伤害")
 print("音效逻辑：先音效 → 延迟0.3秒 → 通知")
 print("只有自己击杀才触发音效+通知")
 print("按 RightShift 打开菜单")
