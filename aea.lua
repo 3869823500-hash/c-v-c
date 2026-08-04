@@ -1,9 +1,9 @@
 -- ============================================================
---  监狱人生 - 最终版（加瞬间换弹MOD）
+--  监狱人生 - 最终完整版（含人物边框+枪械环绕+指定击杀刷新）
 --  警察：罪犯直接打，犯人有武器才打（排除食物）
 --  犯人：打警察 + 开关控制打罪犯
 --  罪犯：打警察 + 开关控制打犯人
---  功能：自动枪械 | 自动拳头 | 传送(自动查找) | 彩虹边框 | 音效(13种) | 击杀通知 | ESP透视 | 自动换弹 | 红色弹道 | 护盾跳过 | 指定击杀 | 瞬间换弹
+--  功能：自动枪械 | 自动拳头 | 传送(自动查找) | 彩虹边框 | 音效(13种) | 击杀通知 | ESP透视（含人物边框） | 自动换弹 | 红色弹道 | 护盾跳过 | 指定击杀（含刷新列表） | 瞬间换弹 | 枪械环绕
 --  音效逻辑：先音效→延迟0.3秒→通知 | 只有自己杀的才触发
 --  按 RightShift 打开菜单
 -- ============================================================
@@ -40,10 +40,14 @@ settings = {
     espEnabled = true,
     prisonerAttackCriminal = false,
     criminalAttackPrisoner = false,
-    targetPlayer = nil,  -- ⭐ 指定击杀目标
+    targetPlayer = nil,
     trailColor = "紫色",
     rainbowBorder = false,
     flowSpeed = 1,
+    orbitEnabled = false,
+    orbitSpeed = 1.5,
+    orbitRadius = 3.5,
+    orbitHeight = 0.5,
 }
 
 local trailColors = {
@@ -124,8 +128,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
---  ⭐ 瞬间换弹MOD（通过getgc查找武器数据表，只改ReloadTime）
---  只改换弹时间，不改弹药、不改伤害
+--  瞬间换弹MOD
 -- ============================================================
 
 local moddedWeapons = {}
@@ -163,7 +166,7 @@ end)
 print("瞬间换弹已启用（只改换弹动作，不改弹药、不改伤害）")
 
 -- ============================================================
---  音效（13种 原神V4）
+--  音效（13种）
 -- ============================================================
 
 local killSounds = {
@@ -403,7 +406,7 @@ end
 local function isEnemy(target)
     if not target or target == player then return false end
 
-    -- ⭐ 指定击杀：如果设置了目标玩家，只打他
+    -- 指定击杀：如果设置了目标玩家，只打他
     if settings.targetPlayer then
         return target == settings.targetPlayer and isAlive(target)
     end
@@ -513,7 +516,7 @@ local function getCurrentWeapon()
 end
 
 -- ============================================================
---  红色弹道
+--  红色弹道（原样保留）
 -- ============================================================
 
 local function createColorTrail(origin, targetPos)
@@ -752,33 +755,60 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ============================================================
---  ESP透视
+--  ESP透视（含人物边框）
 -- ============================================================
 
 local espFolder = Instance.new("Folder")
 espFolder.Name = "ESP_Folder"
 espFolder.Parent = PlayerGui
 
+local espObjects = {}
+
 local function updateESPVisibility()
     for _, child in pairs(espFolder:GetChildren()) do
         child.Enabled = settings.espEnabled
     end
+    for _, entry in pairs(espObjects) do
+        if entry.highlight then
+            entry.highlight.Enabled = settings.espEnabled
+        end
+    end
 end
 
 local function deleteESP(playerObj)
-    local esp = espFolder:FindFirstChild(playerObj.Name)
-    if esp then esp:Destroy() end
+    local esp = espObjects[playerObj]
+    if esp then
+        if esp.billboard then esp.billboard:Destroy() end
+        if esp.highlight then esp.highlight:Destroy() end
+        if esp.updater then pcall(function() task.cancel(esp.updater) end) end
+        espObjects[playerObj] = nil
+    end
 end
 
 local function createESP(playerObj)
     if playerObj == player then return end
     local old = espFolder:FindFirstChild(playerObj.Name)
     if old then old:Destroy() end
+    if espObjects[playerObj] then deleteESP(playerObj) end
+    
     local char = playerObj.Character
     if not char then return end
     local head = char:FindFirstChild("Head")
     if not head then return end
+    
     local textColor = getPlayerTeamColor(playerObj)
+    
+    -- 人物边框 Highlight
+    local highlight = Instance.new("Highlight")
+    highlight.Adornee = char
+    highlight.FillColor = textColor
+    highlight.FillTransparency = 0.7
+    highlight.OutlineColor = textColor
+    highlight.OutlineTransparency = 0.2
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Enabled = settings.espEnabled
+    highlight.Parent = char
+    
     local billboard = Instance.new("BillboardGui")
     billboard.Name = playerObj.Name
     billboard.Size = UDim2.new(0, 200, 0, 40)
@@ -788,6 +818,7 @@ local function createESP(playerObj)
     billboard.StudsOffset = Vector3.new(0, 2.5, 0)
     billboard.Enabled = settings.espEnabled
     billboard.Parent = espFolder
+    
     local nameLabel = Instance.new("TextLabel")
     nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
     nameLabel.BackgroundTransparency = 1
@@ -798,6 +829,7 @@ local function createESP(playerObj)
     nameLabel.TextStrokeTransparency = 0.5
     nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
     nameLabel.Parent = billboard
+    
     local infoLabel = Instance.new("TextLabel")
     infoLabel.Size = UDim2.new(1, 0, 0.5, 0)
     infoLabel.Position = UDim2.new(0, 0, 0.5, 0)
@@ -809,25 +841,41 @@ local function createESP(playerObj)
     infoLabel.TextStrokeTransparency = 0.5
     infoLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
     infoLabel.Parent = billboard
-    task.spawn(function()
+    
+    local entry = {
+        billboard = billboard,
+        nameLabel = nameLabel,
+        infoLabel = infoLabel,
+        highlight = highlight,
+    }
+    
+    entry.updater = task.spawn(function()
         while billboard and billboard.Parent do
             task.wait(0.2)
             local char2 = playerObj.Character
             if not char2 then
                 billboard.Enabled = false
-                continue
-            end
-            billboard.Enabled = settings.espEnabled
-            local hum = char2:FindFirstChildOfClass("Humanoid")
-            if hum then
-                infoLabel.Text = "生命: " .. math.round(hum.Health)
-            end
-            local newColor = getPlayerTeamColor(playerObj)
-            if nameLabel.TextColor3 ~= newColor then
-                nameLabel.TextColor3 = newColor
+                if highlight then highlight.Enabled = false end
+            else
+                billboard.Enabled = settings.espEnabled
+                if highlight then highlight.Enabled = settings.espEnabled end
+                local hum = char2:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    infoLabel.Text = "生命: " .. math.round(hum.Health)
+                end
+                local newColor = getPlayerTeamColor(playerObj)
+                if nameLabel.TextColor3 ~= newColor then
+                    nameLabel.TextColor3 = newColor
+                    if highlight then
+                        highlight.FillColor = newColor
+                        highlight.OutlineColor = newColor
+                    end
+                end
             end
         end
     end)
+    
+    espObjects[playerObj] = entry
 end
 
 local function setupPlayerESP(playerObj)
@@ -850,7 +898,7 @@ task.spawn(function()
     while task.wait(5) do
         for _, p in pairs(Players:GetPlayers()) do
             if p ~= player then
-                local esp = espFolder:FindFirstChild(p.Name)
+                local esp = espObjects[p]
                 if not esp and p.Character and isAlive(p) then
                     createESP(p)
                 end
@@ -858,6 +906,182 @@ task.spawn(function()
         end
     end
 end)
+
+-- ============================================================
+--  枪械环绕
+-- ============================================================
+
+local orbit = {
+    weapons = {},
+    angle = 0,
+    colorIndex = 0,
+}
+local orbitConn = nil
+
+local function isGun(toolName)
+    if not toolName then return false end
+    local name = string.lower(toolName)
+    local gunKeywords = {
+        "gun", "pistol", "rifle", "shotgun", "m9", "ak", "ar",
+        "sniper", "revolver", "smg", "uzi", "mp5", "deagle", "weapon",
+        "handgun", "carbine", "battle", "marksman", "machine", "submachine",
+        "m4", "m16", "aug", "fal", "g3", "h&k", "beretta", "glock",
+        "colt", "remington", "winchester", "mosin", "dragunov"
+    }
+    for _, kw in ipairs(gunKeywords) do
+        if name:find(kw) then return true end
+    end
+    return false
+end
+
+local function orbitGetAllWeapons()
+    local list = {}
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then
+        for _, v in pairs(backpack:GetChildren()) do
+            if v:IsA("Tool") and isGun(v.Name) then table.insert(list, v) end
+        end
+    end
+    local char = player.Character
+    if char then
+        for _, v in pairs(char:GetChildren()) do
+            if v:IsA("Tool") and isGun(v.Name) then
+                local found = false
+                for _, existing in pairs(list) do
+                    if existing == v then found = true break end
+                end
+                if not found then table.insert(list, v) end
+            end
+        end
+    end
+    return list
+end
+
+local function orbitCloneWeapon(original, colorIndex)
+    local clone = original:Clone()
+    clone.Parent = workspace
+    clone.Name = "Orbit_" .. original.Name
+    for _, part in pairs(clone:GetDescendants()) do
+        if part:IsA("BasePart") or part:IsA("MeshPart") then
+            part.CanCollide = false
+            part.Anchored = true
+            part.Transparency = 0.2
+            part.Material = Enum.Material.Neon
+            local hue = colorIndex
+            part.Color = Color3.fromHSV(hue, 1, 1)
+            local light = Instance.new("PointLight")
+            light.Parent = part
+            light.Color = Color3.fromHSV(hue, 1, 1)
+            light.Range = 5
+            light.Brightness = 2
+            local hl = Instance.new("Highlight")
+            hl.Adornee = part
+            hl.FillColor = Color3.fromRGB(255, 255, 255)
+            hl.FillTransparency = 1
+            hl.OutlineColor = Color3.fromHSV(hue, 1, 1)
+            hl.OutlineTransparency = 0
+            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            hl.Parent = part
+        end
+    end
+    return clone
+end
+
+local function orbitCreate()
+    for _, w in pairs(orbit.weapons) do pcall(function() w:Destroy() end) end
+    orbit.weapons = {}
+    orbit.angle = 0
+    if not settings.orbitEnabled then return end
+    local weapons = orbitGetAllWeapons()
+    if #weapons == 0 then return end
+    local total = #weapons
+    for i, w in pairs(weapons) do
+        local colorIndex = (i - 1) / total
+        local clone = orbitCloneWeapon(w, colorIndex)
+        table.insert(orbit.weapons, clone)
+    end
+end
+
+local function orbitUpdate()
+    if not settings.orbitEnabled or #orbit.weapons == 0 then return end
+    local char = player.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+    if not root then return end
+    orbit.angle = orbit.angle + 0.03 * settings.orbitSpeed
+    local total = #orbit.weapons
+    orbit.colorIndex = orbit.colorIndex + 0.01
+    for i, w in pairs(orbit.weapons) do
+        if w and w.Parent then
+            local angleOffset = (i - 1) / total * 2 * math.pi
+            local currentAngle = orbit.angle + angleOffset
+            local x = math.cos(currentAngle) * settings.orbitRadius
+            local z = math.sin(currentAngle) * settings.orbitRadius
+            local y = settings.orbitHeight + math.sin(currentAngle * 2) * 0.5
+            local pos = root.Position + Vector3.new(x, y, z)
+            local cf = CFrame.new(pos, root.Position)
+            local hue = (orbit.colorIndex + (i / total)) % 1
+            local color = Color3.fromHSV(hue, 1, 1)
+            for _, part in pairs(w:GetDescendants()) do
+                if part:IsA("BasePart") or part:IsA("MeshPart") then
+                    part.CFrame = cf
+                    part.Anchored = true
+                    part.Color = color
+                    part.Transparency = 0.2
+                    local light = part:FindFirstChildOfClass("PointLight")
+                    if light then light.Color = color end
+                end
+                if part:IsA("Highlight") then
+                    part.OutlineColor = color
+                end
+            end
+        end
+    end
+end
+
+local function orbitToggle(v)
+    settings.orbitEnabled = v
+    if v then
+        orbitCreate()
+        if orbitConn then orbitConn:Disconnect() end
+        orbitConn = RunService.Heartbeat:Connect(orbitUpdate)
+        print("枪械环绕已开启")
+    else
+        if orbitConn then orbitConn:Disconnect(); orbitConn = nil end
+        for _, w in pairs(orbit.weapons) do pcall(function() w:Destroy() end) end
+        orbit.weapons = {}
+        print("枪械环绕已关闭")
+    end
+end
+
+local function orbitSetupAutoRefresh()
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then
+        backpack.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") and isGun(child.Name) and settings.orbitEnabled then
+                task.wait(0.2)
+                orbitCreate()
+            end
+        end)
+    end
+    local char = player.Character
+    if char then
+        char.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") and isGun(child.Name) and settings.orbitEnabled then
+                task.wait(0.2)
+                orbitCreate()
+            end
+        end)
+    end
+end
+
+player.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    if settings.orbitEnabled then orbitCreate() end
+    orbitSetupAutoRefresh()
+end)
+
+orbitSetupAutoRefresh()
 
 -- ============================================================
 --  传送（自动查找）
@@ -929,7 +1153,7 @@ if type(Library) == "function" then
 elseif type(Library) == "table" and Library.CreateWindow then
     Window = Library:CreateWindow({
         Title = "监狱人生",
-        Footer = "最终版",
+        Footer = "完整版（含人物边框+枪械环绕+指定击杀刷新）",
         NotifySide = "Right",
         ShowCustomCursor = true,
     })
@@ -1022,25 +1246,45 @@ CombatGroup2:AddToggle("CriminalAttackPrisonerToggle", {
 })
 
 -- ============================================================
---  ⭐ 指定击杀
+--  指定击杀（含刷新列表按钮）
 -- ============================================================
 
 local TargetGroup = Tabs.Combat:AddRightGroupbox("指定击杀", "crosshair")
 
 local function getPlayerList()
-    local names = {}
+    local names = {"无目标"}
     for _, p in pairs(Players:GetPlayers()) do
         if p ~= player then
             table.insert(names, p.Name)
         end
     end
-    if #names == 0 then
-        table.insert(names, "无目标")
-    end
     return names
 end
 
-TargetGroup:AddDropdown("TargetSelect", {
+local targetDropdown = nil
+
+local function refreshTargetDropdown()
+    if not targetDropdown then return end
+    local newList = getPlayerList()
+    targetDropdown:SetValues(newList)
+    local current = settings.targetPlayer
+    if current and current.Name then
+        local found = false
+        for _, name in pairs(newList) do
+            if name == current.Name then found = true break end
+        end
+        if found then
+            targetDropdown:SetValue(current.Name)
+        else
+            targetDropdown:SetValue("无目标")
+            settings.targetPlayer = nil
+        end
+    else
+        targetDropdown:SetValue("无目标")
+    end
+end
+
+targetDropdown = TargetGroup:AddDropdown("TargetSelect", {
     Text = "选择目标",
     Values = getPlayerList(),
     Default = "无目标",
@@ -1059,8 +1303,16 @@ TargetGroup:AddDropdown("TargetSelect", {
     end
 })
 
+TargetGroup:AddButton("刷新玩家列表", function()
+    refreshTargetDropdown()
+    print("玩家列表已刷新")
+end)
+
 TargetGroup:AddButton("清除目标", function()
     settings.targetPlayer = nil
+    if targetDropdown then
+        targetDropdown:SetValue("无目标")
+    end
     print("目标已清除")
 end)
 
@@ -1162,6 +1414,44 @@ VisualGroup3:AddSlider("FlowSpeedSlider", {
 })
 VisualGroup3:AddLabel("自动检测所有武器")
 VisualGroup3:AddLabel("颜色沿武器边缘流动旋转")
+
+-- 新增：枪械环绕分组
+local OrbitGroup = Tabs.Visuals:AddRightGroupbox("枪械环绕美化", "activity")
+OrbitGroup:AddToggle("OrbitToggle", {
+    Text = "启用枪械环绕（只对枪械生效）",
+    Default = false,
+    Callback = function(v) orbitToggle(v) end
+})
+OrbitGroup:AddSlider("OrbitSpeed", {
+    Text = "旋转速度",
+    Default = 1.5,
+    Min = 0.5,
+    Max = 4,
+    Rounding = 1,
+    Suffix = "x",
+    Callback = function(v) settings.orbitSpeed = v end
+})
+OrbitGroup:AddSlider("OrbitRadius", {
+    Text = "旋转半径",
+    Default = 3.5,
+    Min = 1,
+    Max = 8,
+    Rounding = 1,
+    Suffix = "格",
+    Callback = function(v) settings.orbitRadius = v end
+})
+OrbitGroup:AddSlider("OrbitHeight", {
+    Text = "高度偏移",
+    Default = 0.5,
+    Min = 0,
+    Max = 4,
+    Rounding = 1,
+    Suffix = "格",
+    Callback = function(v) settings.orbitHeight = v end
+})
+OrbitGroup:AddButton("刷新环绕枪械", function()
+    if settings.orbitEnabled then orbitCreate() end
+end)
 
 local VisualGroup4 = Tabs.Visuals:AddRightGroupbox("音效", "music")
 VisualGroup4:AddToggle("SoundToggle", {
@@ -1325,12 +1615,14 @@ end)
 Library:OnUnload(function() print("已卸载") end)
 
 print("========================================")
-print("监狱人生 最终版已加载（加瞬间换弹MOD）")
+print("监狱人生 最终完整版已加载（含人物边框+枪械环绕+指定击杀刷新）")
 print("警察：罪犯直接打，犯人有武器才打（排除食物）")
 print("犯人：打警察 + 开关控制打罪犯")
 print("罪犯：打警察 + 开关控制打犯人")
-print("指定击杀：只打你选择的玩家")
-print("瞬间换弹：通过内存修改，无需换弹动作，不改弹药、不改伤害")
+print("指定击杀：下拉选择 + 刷新玩家列表 + 清除目标")
+print("人物边框：队伍颜色，随透视开关")
+print("枪械环绕：视觉标签页 -> 枪械环绕美化（只对枪械生效）")
+print("红色弹道：原样保留")
 print("音效逻辑：先音效 → 延迟0.3秒 → 通知")
 print("只有自己击杀才触发音效+通知")
 print("按 RightShift 打开菜单")
